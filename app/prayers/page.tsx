@@ -66,10 +66,10 @@ export default function PrayersPage() {
     urgent: 0,
   });
 
-  // 1. 權限驗證與個人資料讀取
+ // 1. 權限驗證與個人資料讀取
   useEffect(() => {
     const checkUserPermission = async () => {
-      // 改用 getSession，讀取速度更快且不干擾 Server
+      // 改用 getSession，讀取速度更快
       let { data: { session } } = await supabase.auth.getSession();
 
       // 若初次讀取未拿到 Session，緩衝 1 秒供 Storage 寫入
@@ -89,7 +89,7 @@ export default function PrayersPage() {
 
       setCurrentUserId(user.id);
 
-      // 讀取 Profile 資料（使用 maybeSingle 避免找不到資料時拋出例外）
+      // 讀取 Profile 資料
       const { data: profile, error } = await supabase
         .from('profiles')
         .select('status, group_name, full_name, role, can_access_private')
@@ -118,23 +118,10 @@ export default function PrayersPage() {
       setUserProfileName(profile.full_name ?? '');
       setUserRole(profile.role ?? '');
       setCanAccessPrivate(profile.can_access_private ?? false);
-    };
+    }; // 👈 補上這個關閉 checkUserPermission 的 };
 
     checkUserPermission();
-  }, []);
-
-      setCurrentUserId(user.id);
-      setUserRole(profile.role || 'member');
-      setCanAccessPrivate(!!profile.can_access_private);
-
-      if (!profile.group_name || profile.group_name === '未指定小組' || profile.group_name === '未分配小組') {
-        setUserProfileName(profile.full_name || '');
-        setShowProfileModal(true);
-      }
-    };
-
-    checkUserPermission();
-  }, []);
+  }, []); // 👈 關閉 useEffect
 
   // 2. 讀取代禱與感恩清單 (包含右側總覽清單與動態牆精準隔離)
   const loadPrayersAndDashboard = async (targetStatusFilter?: string) => {
