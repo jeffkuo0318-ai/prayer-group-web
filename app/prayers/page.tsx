@@ -69,46 +69,48 @@ export default function PrayersPage() {
   // 1. 權限驗證與個人資料讀取
   useEffect(() => {
     const checkUserPermission = async () => {
-      // 1.1 取得使用者身份（加入防跳轉時間差的緩衝）
-      let { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
 
-      if (!user) {
-        // 給予 1 秒緩衝時間供 Supabase 從存儲中恢復 Session
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const { data: { user: recheckUser } } = await supabase.auth.getUser();
-        user = recheckUser;
-      }
-
-      // 若確定沒有登入，才跳轉登入頁
       if (!user) {
         window.location.href = '/login';
         return;
       }
 
-      // 紀錄 User ID
-      setCurrentUserId(user.id);
-
-      // 1.2 讀取個人 Profile 資料
       const { data: profile } = await supabase
         .from('profiles')
         .select('status, group_name, full_name, role, can_access_private')
         .eq('id', user.id)
         .single();
 
-      // 1.3 使用 profile?. 防範 null 值的 TypeScript 報錯
-      if (!profile || profile?.status !== 'approved') {
-        console.warn('帳號尚未審核通過或 Profile 未初始化：', profile);
+      if (!profile || profile.status !== 'approved') {
+        window.location.href = '/login';
+        return;
       }
 
-      // 設定您專案原有的 State
-      setUserProfileName(profile?.full_name ?? '');
-      setUserRole(profile?.role ?? '');
-      setCanAccessPrivate(profile?.can_access_private ?? false);
+      setCurrentUserId(user.id);
+      setUserRole(profile.role || 'member');
+      setCanAccessPrivate(!!profile.can_access_private);
+
+      if (!profile.group_name || profile.group_name === '未指定小組' || profile.group_name === '未分配小組') {
+        setUserProfileName(profile.full_name || '');
+        setShowProfileModal(true);
+      }
     };
 
     checkUserPermission();
   }, []);
-  
+
+  // 2. 讀取代禱與感恩清單 (包含右側總覽清單與動態牆精準隔離)
+  const loadPrayersAndDashboard = async (targetStatusFilter?: string) => {
+    if (!currentUserId) return;
+
+    const currentFilter = targetStatusFilter !== undefined ? targetStatusFilter : statusFilter;
+
+    const { data: allPrayers } = await supabase
+      .from('prayers')
+      .select('*')
+      .order('created_at', { ascending: false });
+
     const isLeaderOrAdmin = [
       'admin',
       'developer',
