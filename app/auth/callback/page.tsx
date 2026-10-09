@@ -1,31 +1,28 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
 export default function AuthCallbackPage() {
-  const router = useRouter();
-
   useEffect(() => {
-    // 1. 監聽 Supabase 認證狀態變化（當瀏覽器解析完 URL 上的 Token 後會自動觸發）
+    // 1. 監聽認證狀態變更（Supabase 解析完網址 #access_token 後會觸發 SIGNED_IN）
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session) {
-        router.replace('/');
+      if (event === 'SIGNED_IN' || session) {
+        window.location.href = '/'; // 強制硬跳轉，清除網址 hash 並重新載入首頁狀態
       }
     });
 
-    // 2. 檢查當前是否已成功取得 Session
+    // 2. 雙重確認當前 Session 狀態
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
-        router.replace('/');
+        window.location.href = '/';
       }
     });
 
     return () => {
       authListener.subscription.unsubscribe();
     };
-  }, [router]);
+  }, []);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-amber-50/30">
