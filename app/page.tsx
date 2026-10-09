@@ -3,18 +3,29 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import ProverbsBanner from '@/components/ProverbsBanner';
-import { HeartHandshake, LogIn, ShieldCheck, UserCheck, ArrowRight } from 'lucide-react';
+import { HeartHandshake, LogIn, ShieldCheck, UserCheck, ArrowRight, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 
 export default function WelcomePage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (data.user) {
-        setCurrentUser(data.user);
-      }
+    // 1. 取得初始 Session 狀態
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setCurrentUser(session?.user ?? null);
+      setLoading(false);
     });
+
+    // 2. 監聽認證狀態變更（登入/登出時實時更新狀態）
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setCurrentUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   const handleLogout = async () => {
@@ -62,7 +73,11 @@ export default function WelcomePage() {
             進入禱告頁面 <ArrowRight className="w-5 h-5" />
           </Link>
 
-          {currentUser ? (
+          {loading ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex justify-center items-center text-xs text-amber-800 gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-amber-600" /> 正在確認登入狀態...
+            </div>
+          ) : currentUser ? (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex justify-between items-center text-xs">
               <span className="flex items-center gap-1.5 text-amber-900 font-semibold">
                 <UserCheck className="w-4 h-4 text-green-600" /> 已登入：{currentUser.email}
@@ -86,8 +101,8 @@ export default function WelcomePage() {
       </div>
 
       <footer className="text-center text-xs text-gray-400 py-6">
-  教會小組禱告網頁 © 2026 同心守望
-</footer>
+        教會小組禱告網頁 © 2026 同心守望
+      </footer>
     </main>
   );
 }
