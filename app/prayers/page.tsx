@@ -69,23 +69,59 @@ export default function PrayersPage() {
   // 1. 權限驗證與個人資料讀取
   useEffect(() => {
     const checkUserPermission = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      // 改用 getSession，讀取速度更快且不干擾 Server
+      let { data: { session } } = await supabase.auth.getSession();
+
+      // 若初次讀取未拿到 Session，緩衝 1 秒供 Storage 寫入
+      if (!session?.user) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const { data: { session: recheckSession } } = await supabase.auth.getSession();
+        session = recheckSession;
+      }
+
+      const user = session?.user;
 
       if (!user) {
+        console.warn('❌ 找不到有效的登入 Session');
         window.location.href = '/login';
         return;
       }
 
-      const { data: profile } = await supabase
+      setCurrentUserId(user.id);
+
+      // 讀取 Profile 資料（使用 maybeSingle 避免找不到資料時拋出例外）
+      const { data: profile, error } = await supabase
         .from('profiles')
         .select('status, group_name, full_name, role, can_access_private')
         .eq('id', user.id)
-        .single();
+        .maybeSingle();
 
-      if (!profile || profile.status !== 'approved') {
+      if (error) {
+        console.error('讀取 Profile 發生錯誤：', error);
+      }
+
+      // 關鍵診斷 1：若 profiles 表格查不到此 Google 帳號 ID
+      if (!profile) {
+        alert(`您的 Google 帳號登入成功，但資料庫 profiles 表格中尚未建立您的 ID：\n${user.id}\n\n請將此 ID 新增至 profiles 資料表即可通過驗證！`);
         window.location.href = '/login';
         return;
       }
+
+      // 關鍵診斷 2：若 status 不是 approved
+      if (profile.status !== 'approved') {
+        alert(`您的帳號狀態為「${profile.status}」，尚未通過審核！`);
+        window.location.href = '/login';
+        return;
+      }
+
+      // 通過驗證，寫入 State
+      setUserProfileName(profile.full_name ?? '');
+      setUserRole(profile.role ?? '');
+      setCanAccessPrivate(profile.can_access_private ?? false);
+    };
+
+    checkUserPermission();
+  }, []);
 
       setCurrentUserId(user.id);
       setUserRole(profile.role || 'member');
