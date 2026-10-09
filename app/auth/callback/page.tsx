@@ -9,37 +9,52 @@ export default function AuthCallbackPage() {
   const [status, setStatus] = useState('正在完成 Google 登入驗證...');
 
   useEffect(() => {
-    // 1. 監聽 Auth 狀態變化（這是 Supabase 寫入 OAuth Token 的標準作法）
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session || event === 'SIGNED_IN') {
-        setStatus('驗證成功，即將進入代禱頁面...');
-        setTimeout(() => {
-          router.replace('/prayers');
-        }, 500);
-      }
-    });
+    const handleOAuthCallback = async () => {
+      try {
+        // 1. 檢查網址列是否包含 PKCE 的 code 參數
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
 
-    // 2. 主動檢查 Session（若已自動寫入）
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        setStatus('登入成功，正在跳轉...');
+        if (code) {
+          setStatus('正在交換授權憑證...');
+          // 主動用 code 交換 Session
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) {
+            console.error('Exchange code error:', error.message);
+            setStatus(`驗證失敗: ${error.message}`);
+            setTimeout(() => router.replace('/login'), 2000);
+            return;
+          }
+        }
+
+        // 2. 驗證是否成功取得 Session
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError || !session) {
+          console.warn('找不到有效 Session，重新嘗試...');
+          // 給予 1 秒緩衝再查一次
+          setTimeout(async () => {
+            const { data: { session: retrySession } } = await supabase.auth.getSession();
+            if (retrySession) {
+              setStatus('登入成功，正在進入代禱頁面...');
+              router.replace('/prayers');
+            } else {
+              setStatus('登入逾時，請重新登入...');
+              setTimeout(() => router.replace('/login'), 1500);
+            }
+          }, 1000);
+          return;
+        }
+
+        setStatus('登入成功，正在進入代禱頁面...');
         router.replace('/prayers');
+      } catch (err) {
+        console.error('Callback 發生未預期錯誤：', err);
+        router.replace('/login');
       }
     };
 
-    checkSession();
-
-    // 3. 安全退路：5 秒內若完全無反應才退回登入頁
-    const timer = setTimeout(() => {
-      setStatus('驗證超時，返回登入頁...');
-      router.replace('/login');
-    }, 5000);
-
-    return () => {
-      subscription.unsubscribe();
-      clearTimeout(timer);
-    };
+    handleOAuthCallback();
   }, [router]);
 
   return (
