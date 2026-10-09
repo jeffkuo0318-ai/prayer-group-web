@@ -9,37 +9,37 @@ export default function AuthCallbackPage() {
   const [status, setStatus] = useState('正在完成 Google 登入驗證...');
 
   useEffect(() => {
-    const handleAuth = async () => {
-      // 1. 檢查是否已有 Session
+    // 1. 監聽 Auth 狀態變化（這是 Supabase 寫入 OAuth Token 的標準作法）
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session || event === 'SIGNED_IN') {
+        setStatus('驗證成功，即將進入代禱頁面...');
+        setTimeout(() => {
+          router.replace('/prayers');
+        }, 500);
+      }
+    });
+
+    // 2. 主動檢查 Session（若已自動寫入）
+    const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        setStatus('登入成功，正在進入代禱頁面...');
+        setStatus('登入成功，正在跳轉...');
         router.replace('/prayers');
-        return;
       }
-
-      // 2. 監聽 Session 寫入
-      const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-        if (session || event === 'SIGNED_IN') {
-          setStatus('驗證成功，即將跳轉...');
-          setTimeout(() => {
-            router.replace('/prayers');
-          }, 400); // 緩衝 400ms 確保 localStorage 完整儲存
-        }
-      });
-
-      // 3. 安全防死鎖退路
-      const timer = setTimeout(() => {
-        router.replace('/prayers');
-      }, 3000);
-
-      return () => {
-        authListener.subscription.unsubscribe();
-        clearTimeout(timer);
-      };
     };
 
-    handleAuth();
+    checkSession();
+
+    // 3. 安全退路：5 秒內若完全無反應才退回登入頁
+    const timer = setTimeout(() => {
+      setStatus('驗證超時，返回登入頁...');
+      router.replace('/login');
+    }, 5000);
+
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(timer);
+    };
   }, [router]);
 
   return (
