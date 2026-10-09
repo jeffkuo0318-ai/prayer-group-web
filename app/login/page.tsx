@@ -67,7 +67,7 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/login`,
+       redirectTo: `${window.location.origin}/`, // 👈 改為轉址回首頁 /
       },
     });
     if (error) {
