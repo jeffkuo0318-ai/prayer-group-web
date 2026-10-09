@@ -85,6 +85,9 @@ export default function PrayersPage() {
         return;
       }
 
+      // 紀錄 User ID
+      setCurrentUserId(user.id);
+
       // 1.2 讀取個人 Profile 資料
       const { data: profile } = await supabase
         .from('profiles')
@@ -97,27 +100,15 @@ export default function PrayersPage() {
         console.warn('帳號尚未審核通過或 Profile 未初始化：', profile);
       }
 
-      // 設定 State 時補上 ?. 與預設值
-      setGroupName(profile?.group_name ?? '');
-      setFullName(profile?.full_name ?? '');
+      // 設定您專案原有的 State
+      setUserProfileName(profile?.full_name ?? '');
       setUserRole(profile?.role ?? '');
       setCanAccessPrivate(profile?.can_access_private ?? false);
-    }; // 👈 注意：關閉 checkUserPermission 函數
+    };
 
     checkUserPermission();
-  }, []); // 👈 關閉 useEffect
-
-  // 2. 讀取代禱與感恩清單 (包含右側總覽清單與動態牆精準隔離)
-  const loadPrayersAndDashboard = async (targetStatusFilter?: string) => {
-    if (!currentUserId) return;
-
-    const currentFilter = targetStatusFilter !== undefined ? targetStatusFilter : statusFilter;
-
-    const { data: allPrayers } = await supabase
-      .from('prayers')
-      .select('*')
-      .order('created_at', { ascending: false });
-
+  }, []);
+  
     const isLeaderOrAdmin = [
       'admin',
       'developer',
