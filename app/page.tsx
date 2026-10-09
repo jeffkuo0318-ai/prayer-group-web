@@ -86,8 +86,8 @@ export default function WelcomePage() {
       </div>
 
       <footer className="text-center text-xs text-gray-400 py-6">
-        教會小組禱告網頁 © {new Date().getFullYear()} 同心守望
-      </footer>
+  教會小組禱告網頁 © 2026 同心守望
+</footer>
     </main>
   );
 }
