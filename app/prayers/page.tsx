@@ -92,32 +92,20 @@ export default function PrayersPage() {
         .eq('id', user.id)
         .single();
 
-      // 1.3 若為新 Google 註冊帳號（資料尚未建置或為待審核 status === 'pending'）
-      // 不要直接踢回 /login，避免陷入死循環
-      if (!profile || profile.status !== 'approved') {
-        console.warn('帳號尚未審核通過或 Profile 未初始化：', profile);
-        // 可根據需求允許暫時觀看公開代禱，或跳轉至資料補全頁面
-      }
-// 1.2 讀取個人 Profile 資料
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('status, group_name, full_name, role, can_access_private')
-        .eq('id', user.id)
-        .single();
-
       // 1.3 使用 profile?. 防範 null 值的 TypeScript 報錯
       if (!profile || profile?.status !== 'approved') {
         console.warn('帳號尚未審核通過或 Profile 未初始化：', profile);
       }
 
-      // 設定 State 時，全部補上 ?. 與預設值
+      // 設定 State 時補上 ?. 與預設值
       setGroupName(profile?.group_name ?? '');
       setFullName(profile?.full_name ?? '');
       setUserRole(profile?.role ?? '');
       setCanAccessPrivate(profile?.can_access_private ?? false);
+    }; // 👈 注意：關閉 checkUserPermission 函數
 
     checkUserPermission();
-  }, []);
+  }, []); // 👈 關閉 useEffect
 
   // 2. 讀取代禱與感恩清單 (包含右側總覽清單與動態牆精準隔離)
   const loadPrayersAndDashboard = async (targetStatusFilter?: string) => {
