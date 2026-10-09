@@ -69,23 +69,37 @@ export default function PrayersPage() {
   // 1. 權限驗證與個人資料讀取
   useEffect(() => {
     const checkUserPermission = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      // 1.1 取得使用者身份（加入防跳轉時間差的緩衝）
+      let { data: { user } } = await supabase.auth.getUser();
 
+      if (!user) {
+        // 給予 1 秒緩衝時間供 Supabase 從存儲中恢復 Session
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const { data: { user: recheckUser } } = await supabase.auth.getUser();
+        user = recheckUser;
+      }
+
+      // 若確定沒有登入，才跳轉登入頁
       if (!user) {
         window.location.href = '/login';
         return;
       }
 
+      // 1.2 讀取個人 Profile 資料
       const { data: profile } = await supabase
         .from('profiles')
         .select('status, group_name, full_name, role, can_access_private')
         .eq('id', user.id)
         .single();
 
+      // 1.3 若為新 Google 註冊帳號（資料尚未建置或為待審核 status === 'pending'）
+      // 不要直接踢回 /login，避免陷入死循環
       if (!profile || profile.status !== 'approved') {
-        window.location.href = '/login';
-        return;
+        console.warn('帳號尚未審核通過或 Profile 未初始化：', profile);
+        // 可根據需求允許暫時觀看公開代禱，或跳轉至資料補全頁面
       }
+
+      // 下方保留您原本設定 state 與載入資料的程式碼...
 
       setCurrentUserId(user.id);
       setUserRole(profile.role || 'member');
