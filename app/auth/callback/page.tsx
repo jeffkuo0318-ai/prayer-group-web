@@ -9,30 +9,41 @@ export default function AuthCallbackPage() {
   const [status, setStatus] = useState('正在完成 Google 登入驗證...');
 
   useEffect(() => {
-    const handleOAuthCallback = async () => {
+    const handleCallback = async () => {
       try {
-        // 1. 檢查網址列是否包含 PKCE 的 code 參數
-        const urlParams = new URLSearchParams(window.location.search);
-        const code = urlParams.get('code');
+        // 1. 檢查網址 Hash 是否包含 access_token (Implicit Flow)
+        const hash = window.location.hash;
+        if (hash && hash.includes('access_token')) {
+          const params = new URLSearchParams(hash.substring(1));
+          const accessToken = params.get('access_token');
+          const refreshToken = params.get('refresh_token');
 
-        if (code) {
-          setStatus('正在交換授權憑證...');
-          // 主動用 code 交換 Session
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) {
-            console.error('Exchange code error:', error.message);
-            setStatus(`驗證失敗: ${error.message}`);
-            setTimeout(() => router.replace('/login'), 2000);
-            return;
+          if (accessToken && refreshToken) {
+            setStatus('正在建立登入工作階段...');
+            const { error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+
+            if (error) {
+              console.error('Set session error:', error.message);
+            }
           }
         }
 
-        // 2. 驗證是否成功取得 Session
+        // 2. 檢查網址 Query 是否包含 code (PKCE Flow)
+        const searchParams = new URLSearchParams(window.location.search);
+        const code = searchParams.get('code');
+        if (code) {
+          setStatus('正在交換授權憑證...');
+          await supabase.auth.exchangeCodeForSession(code);
+        }
+
+        // 3. 確認是否成功取得 Session
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         
         if (sessionError || !session) {
-          console.warn('找不到有效 Session，重新嘗試...');
-          // 給予 1 秒緩衝再查一次
+          // 給予 1 秒緩衝再讀取一次
           setTimeout(async () => {
             const { data: { session: retrySession } } = await supabase.auth.getSession();
             if (retrySession) {
@@ -49,12 +60,12 @@ export default function AuthCallbackPage() {
         setStatus('登入成功，正在進入代禱頁面...');
         router.replace('/prayers');
       } catch (err) {
-        console.error('Callback 發生未預期錯誤：', err);
+        console.error('Callback error:', err);
         router.replace('/login');
       }
     };
 
-    handleOAuthCallback();
+    handleCallback();
   }, [router]);
 
   return (
