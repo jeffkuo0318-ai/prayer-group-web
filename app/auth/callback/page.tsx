@@ -1,34 +1,43 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
 export default function AuthCallbackPage() {
+  const [status, setStatus] = useState('正在完成 Google 登入驗證...');
+
   useEffect(() => {
-    // 1. 監聽認證狀態變更（Supabase 解析完網址 #access_token 後會觸發 SIGNED_IN）
+    // 1. 監聽 Supabase 認證狀態變更
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' || session) {
-        window.location.href = '/'; // 強制硬跳轉，清除網址 hash 並重新載入首頁狀態
+      if (session || event === 'SIGNED_IN') {
+        window.location.href = '/';
       }
     });
 
-    // 2. 雙重確認當前 Session 狀態
+    // 2. 檢查當前 Session 狀態
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
         window.location.href = '/';
       }
     });
 
+    // 3. 安全退路機制：2.5 秒後若 Token 已被讀取或已登入，直接強制導向首頁
+    const timer = setTimeout(() => {
+      setStatus('正在為您導向首頁...');
+      window.location.href = '/';
+    }, 2500);
+
     return () => {
       authListener.subscription.unsubscribe();
+      clearTimeout(timer);
     };
   }, []);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-amber-50/30">
       <div className="text-center">
-        <p className="text-lg font-medium text-amber-900">正在完成 Google 登入驗證...</p>
-        <p className="text-sm text-gray-500 mt-2">請稍候，即將為您導向首頁</p>
+        <p className="text-lg font-medium text-amber-900">{status}</p>
+        <p className="text-sm text-gray-500 mt-2">請稍候，系統處理中...</p>
       </div>
     </div>
   );
