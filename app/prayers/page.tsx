@@ -28,7 +28,7 @@ export default function PrayersPage() {
   const [isAdminOrLeader, setIsAdminOrLeader] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'public' | 'private' | 'urgent' | 'thanksgiving'>('all');
-  
+
   // 聚焦檢視單一事項 ID (檢視單一事項模式)
   const [focusedPrayerId, setFocusedPrayerId] = useState<string | null>(null);
 
@@ -45,18 +45,33 @@ export default function PrayersPage() {
 
     if (user) {
       const role = user.user_metadata?.role;
-      if (role === 'admin' || role === 'leader') {
+      const userEmail = user.email || '';
+
+      // 檢查 Supabase auth metadata 中的 role，或比對專屬開發者最高權限帳號 Email
+      if (
+        role === 'admin' ||
+        role === 'leader' ||
+        userEmail === 'jeffkuo0318@gmail.com'
+      ) {
         setIsAdminOrLeader(true);
       }
 
-      // 檢查 User profile
+      // 檢查 User profile 是否已填寫真實姓名與小組，未填寫則強制跳出 Modal 要求補充
       const { data: profile } = await supabase
         .from('profiles')
-        .select('full_name, group_name')
+        .select('full_name, group_name, role')
         .eq('id', user.id)
         .single();
 
-      if (!profile?.full_name || !profile?.group_name) {
+      if (profile) {
+        // 若 profile 資料表有紀錄小家長/管理員角色，亦同步開通權限
+        if (profile.role === 'admin' || profile.role === 'leader') {
+          setIsAdminOrLeader(true);
+        }
+        if (!profile.full_name || !profile.group_name) {
+          setIsProfileOpen(true);
+        }
+      } else {
         setIsProfileOpen(true);
       }
     }
@@ -93,22 +108,22 @@ export default function PrayersPage() {
     }
   };
 
-  // 快捷操作：切換公私密
+  // 快捷操作：切換公私密權限
   const handleTogglePrivate = async (prayer: any) => {
     if (prayer.is_private || prayer.type === 'private') {
-      // 轉為公開
+      // 轉為一般公禱
       const { error } = await supabase
         .from('prayers')
         .update({ is_private: false, type: 'public' })
         .eq('id', prayer.id);
       if (!error) fetchPrayersAndUser();
     } else {
-      // 轉為私密，打開權限選單
+      // 轉為私密代禱，打開選取肢體權限的 Modal
       setEditingPrayerForAccess(prayer);
     }
   };
 
-  // 快捷操作：刪除事項
+  // 快捷操作：刪除代禱事項
   const handleDeletePrayer = async (prayerId: string) => {
     if (!confirm('確定要刪除這筆代禱事項嗎？刪除後無法復原。')) return;
     const { error } = await supabase.from('prayers').delete().eq('id', prayerId);
@@ -128,12 +143,14 @@ export default function PrayersPage() {
     urgent: prayers.filter((p) => p.status === 'urgent').length,
   };
 
-  // 私密事項清單（供右側面板或創作者管理區呈現）
+  // 私密事項清單（供右側面板管理者/創作者檢視）
   const privatePrayers = prayers.filter(
-    (p) => (p.is_private || p.type === 'private') && (p.user_id === currentUser?.id || p.creator_id === currentUser?.id || isAdminOrLeader)
+    (p) =>
+      (p.is_private || p.type === 'private') &&
+      (p.user_id === currentUser?.id || p.creator_id === currentUser?.id || isAdminOrLeader)
   );
 
-  // 依標籤過濾
+  // 依標籤篩選
   const filteredPrayers = prayers.filter((p) => {
     if (focusedPrayerId) return p.id === focusedPrayerId;
     if (filter === 'public') return !p.is_private && p.type !== 'private';
@@ -145,7 +162,7 @@ export default function PrayersPage() {
 
   return (
     <div className="min-h-screen bg-gray-50/60 pb-20 font-sans">
-      {/* 1. 頂部 Bar (含返回首頁 & 管理後台入口) */}
+      {/* 1. 頂部導覽 Bar (含返回首頁、管理後台入口與我要代禱) */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -163,7 +180,7 @@ export default function PrayersPage() {
           <div className="flex items-center gap-2">
             {isAdminOrLeader && (
               <Link
-                href="/admin"
+                href="/admin/audit"
                 className="bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-bold px-3 py-1.5 rounded-xl border border-amber-300 transition flex items-center gap-1"
               >
                 <ShieldCheck className="w-4 h-4 text-amber-700" /> 管理後台
@@ -180,7 +197,7 @@ export default function PrayersPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        {/* 2. 📊 全網守望狀態概況 (統計卡片區塊) */}
+        {/* 2. 📊 全網守望狀態概況 (統計數據卡片區塊) */}
         <div className="bg-slate-900 text-white p-4 md:p-5 rounded-3xl shadow-sm space-y-3">
           <div className="flex items-center justify-between text-xs text-slate-300 font-semibold">
             <span className="flex items-center gap-1.5">
@@ -191,8 +208,13 @@ export default function PrayersPage() {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div
-              onClick={() => { setFocusedPrayerId(null); setFilter('all'); }}
-              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${filter === 'all' && !focusedPrayerId ? 'ring-2 ring-amber-400' : ''}`}
+              onClick={() => {
+                setFocusedPrayerId(null);
+                setFilter('all');
+              }}
+              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${
+                filter === 'all' && !focusedPrayerId ? 'ring-2 ring-amber-400' : ''
+              }`}
             >
               <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
                 <Flame className="w-4 h-4 text-amber-400" /> 🔥 禱告中
@@ -201,8 +223,13 @@ export default function PrayersPage() {
             </div>
 
             <div
-              onClick={() => { setFocusedPrayerId(null); setFilter('thanksgiving'); }}
-              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${filter === 'thanksgiving' ? 'ring-2 ring-emerald-400' : ''}`}
+              onClick={() => {
+                setFocusedPrayerId(null);
+                setFilter('thanksgiving');
+              }}
+              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${
+                filter === 'thanksgiving' ? 'ring-2 ring-emerald-400' : ''
+              }`}
             >
               <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
                 <CheckCircle className="w-4 h-4 text-emerald-400" /> 🌱 蒙應允
@@ -211,8 +238,13 @@ export default function PrayersPage() {
             </div>
 
             <div
-              onClick={() => { setFocusedPrayerId(null); setFilter('thanksgiving'); }}
-              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${filter === 'thanksgiving' ? 'ring-2 ring-purple-400' : ''}`}
+              onClick={() => {
+                setFocusedPrayerId(null);
+                setFilter('thanksgiving');
+              }}
+              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${
+                filter === 'thanksgiving' ? 'ring-2 ring-purple-400' : ''
+              }`}
             >
               <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
                 <Sparkles className="w-4 h-4 text-purple-400" /> 🙌 獻上感恩
@@ -221,8 +253,13 @@ export default function PrayersPage() {
             </div>
 
             <div
-              onClick={() => { setFocusedPrayerId(null); setFilter('urgent'); }}
-              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${filter === 'urgent' ? 'ring-2 ring-red-400' : ''}`}
+              onClick={() => {
+                setFocusedPrayerId(null);
+                setFilter('urgent');
+              }}
+              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${
+                filter === 'urgent' ? 'ring-2 ring-red-400' : ''
+              }`}
             >
               <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
                 <Flame className="w-4 h-4 text-red-400" /> ⚡ 迫切緊急
@@ -232,42 +269,111 @@ export default function PrayersPage() {
           </div>
         </div>
 
-        {/* 主區塊：左側禱告牆 (2/3) + 右側私密管理清單面板 (1/3) */}
+        {/* 3. 🌟 三大直覺入口 */}
+        <div className="grid grid-cols-3 gap-2.5 md:gap-4">
+          <button
+            onClick={() => setIsCreateOpen(true)}
+            className="bg-amber-500 hover:bg-amber-600 text-white p-3.5 md:p-5 rounded-2xl md:rounded-3xl shadow-sm text-center transition space-y-1 cursor-pointer"
+          >
+            <div className="text-lg md:text-2xl font-bold">🙏</div>
+            <div className="text-xs md:text-base font-bold">我要代禱</div>
+            <div className="text-[10px] md:text-xs text-amber-100 hidden sm:block">發起需要守望事項</div>
+          </button>
+
+          <button
+            onClick={() => {
+              setFocusedPrayerId(null);
+              setFilter('all');
+            }}
+            className="bg-white hover:bg-gray-50 text-gray-800 border border-gray-200 p-3.5 md:p-5 rounded-2xl md:rounded-3xl shadow-sm text-center transition space-y-1 cursor-pointer"
+          >
+            <div className="text-lg md:text-2xl font-bold text-amber-600">❤️</div>
+            <div className="text-xs md:text-base font-bold">為肢體守望</div>
+            <div className="text-[10px] md:text-xs text-gray-400 hidden sm:block">瀏覽同心阿們代禱</div>
+          </button>
+
+          <button
+            onClick={() => {
+              setFocusedPrayerId(null);
+              setFilter('thanksgiving');
+            }}
+            className="bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 p-3.5 md:p-5 rounded-2xl md:rounded-3xl shadow-sm text-center transition space-y-1 cursor-pointer"
+          >
+            <div className="text-lg md:text-2xl font-bold">🙌</div>
+            <div className="text-xs md:text-base font-bold">感恩見證</div>
+            <div className="text-[10px] md:text-xs text-purple-600 hidden sm:block">數算上帝奇妙恩典</div>
+          </button>
+        </div>
+
+        {/* 4. 主區塊：左側禱告牆 (2/3) + 右側私密代禱清單管理面板 (1/3) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          
-          {/* 左側：禱告牆與單一焦點模式 */}
+          {/* 左側：禱告牆與單一焦點檢視模式 */}
           <div className="lg:col-span-2 space-y-4">
-            
             {/* 標籤過濾 Bar */}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs md:text-sm">
                 <button
-                  onClick={() => { setFocusedPrayerId(null); setFilter('all'); }}
-                  className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer ${filter === 'all' && !focusedPrayerId ? 'bg-amber-500 text-white shadow-xs' : 'bg-white border text-gray-600 hover:bg-gray-50'}`}
+                  onClick={() => {
+                    setFocusedPrayerId(null);
+                    setFilter('all');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                    filter === 'all' && !focusedPrayerId
+                      ? 'bg-amber-500 text-white shadow-xs'
+                      : 'bg-white border text-gray-600 hover:bg-gray-50'
+                  }`}
                 >
                   全部代禱
                 </button>
                 <button
-                  onClick={() => { setFocusedPrayerId(null); setFilter('public'); }}
-                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${filter === 'public' ? 'bg-amber-500 text-white shadow-xs' : 'bg-white border text-gray-600 hover:bg-gray-50'}`}
+                  onClick={() => {
+                    setFocusedPrayerId(null);
+                    setFilter('public');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${
+                    filter === 'public'
+                      ? 'bg-amber-500 text-white shadow-xs'
+                      : 'bg-white border text-gray-600 hover:bg-gray-50'
+                  }`}
                 >
                   <Globe className="w-3.5 h-3.5" /> 一般公禱
                 </button>
                 <button
-                  onClick={() => { setFocusedPrayerId(null); setFilter('private'); }}
-                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${filter === 'private' ? 'bg-purple-600 text-white shadow-xs' : 'bg-white border text-gray-600 hover:bg-gray-50'}`}
+                  onClick={() => {
+                    setFocusedPrayerId(null);
+                    setFilter('private');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${
+                    filter === 'private'
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'bg-white border text-gray-600 hover:bg-gray-50'
+                  }`}
                 >
                   <Lock className="w-3.5 h-3.5" /> 私密代禱
                 </button>
                 <button
-                  onClick={() => { setFocusedPrayerId(null); setFilter('urgent'); }}
-                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${filter === 'urgent' ? 'bg-red-600 text-white shadow-xs' : 'bg-white border text-gray-600 hover:bg-gray-50'}`}
+                  onClick={() => {
+                    setFocusedPrayerId(null);
+                    setFilter('urgent');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${
+                    filter === 'urgent'
+                      ? 'bg-red-600 text-white shadow-xs'
+                      : 'bg-white border text-gray-600 hover:bg-gray-50'
+                  }`}
                 >
                   <Flame className="w-3.5 h-3.5" /> 迫切緊急
                 </button>
                 <button
-                  onClick={() => { setFocusedPrayerId(null); setFilter('thanksgiving'); }}
-                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${filter === 'thanksgiving' ? 'bg-purple-600 text-white shadow-xs' : 'bg-white border text-gray-600 hover:bg-gray-50'}`}
+                  onClick={() => {
+                    setFocusedPrayerId(null);
+                    setFilter('thanksgiving');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${
+                    filter === 'thanksgiving'
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'bg-white border text-gray-600 hover:bg-gray-50'
+                  }`}
                 >
                   <Sparkles className="w-3.5 h-3.5" /> 感恩見證牆
                 </button>
@@ -308,7 +414,7 @@ export default function PrayersPage() {
             )}
           </div>
 
-          {/* 右側：私密代禱管理面板 (復原原本包含快速切換、編輯權限、刪除的完整清單) */}
+          {/* 右側：私密代禱管理面板 (含快速切換狀態、編輯權限、刪除控制項) */}
           <div className="space-y-4">
             <div className="bg-white border border-amber-200/80 rounded-3xl p-5 shadow-sm space-y-4">
               <div className="flex items-center justify-between border-b border-gray-100 pb-3">
@@ -320,19 +426,25 @@ export default function PrayersPage() {
                 </span>
               </div>
 
-              {/* 操作說明小提示 */}
+              {/* 操作說明提示 */}
               <div className="bg-amber-50/80 border border-amber-200/60 p-3 rounded-2xl text-[11px] text-amber-900 space-y-1">
                 <p className="font-bold flex items-center gap-1 text-amber-800">
                   <Info className="w-3.5 h-3.5" /> 操作說明：
                 </p>
                 <ol className="list-decimal pl-4 space-y-0.5 text-amber-900/90 leading-relaxed">
-                  <li><strong>轉獻上感恩</strong>：移至感恩見證牆。</li>
-                  <li><strong>設為緊急</strong>：切換迫切緊急狀態。</li>
-                  <li><strong>權限/轉公禱</strong>：選取或排除參與肢體。</li>
+                  <li>
+                    <strong>轉獻上感恩</strong>：移至感恩見證牆。
+                  </li>
+                  <li>
+                    <strong>設為緊急</strong>：切換迫切緊急狀態。
+                  </li>
+                  <li>
+                    <strong>權限/轉公禱</strong>：選取或排除參與肢體。
+                  </li>
                 </ol>
               </div>
 
-              {/* 私密清單卡片 */}
+              {/* 私密清單單卡列表 */}
               {privatePrayers.length === 0 ? (
                 <p className="text-xs text-gray-400 text-center py-4">無管轄中的私密代禱事項</p>
               ) : (
@@ -340,7 +452,11 @@ export default function PrayersPage() {
                   {privatePrayers.map((p) => (
                     <div
                       key={p.id}
-                      className={`p-3 rounded-2xl border transition space-y-2 text-xs ${focusedPrayerId === p.id ? 'border-amber-500 bg-amber-50/40 shadow-xs' : 'border-gray-200 bg-gray-50/60 hover:bg-gray-50'}`}
+                      className={`p-3 rounded-2xl border transition space-y-2 text-xs ${
+                        focusedPrayerId === p.id
+                          ? 'border-amber-500 bg-amber-50/40 shadow-xs'
+                          : 'border-gray-200 bg-gray-50/60 hover:bg-gray-50'
+                      }`}
                     >
                       <div className="flex items-center justify-between">
                         <span
@@ -352,36 +468,36 @@ export default function PrayersPage() {
                         </span>
                         <button
                           onClick={() => setFocusedPrayerId(p.id)}
-                          className="text-gray-400 hover:text-amber-600 p-0.5"
+                          className="text-gray-400 hover:text-amber-600 p-0.5 cursor-pointer"
                           title="聚焦檢視此卡片"
                         >
                           <ChevronRight className="w-4 h-4" />
                         </button>
                       </div>
 
-                      {/* 快捷管理操作按鈕列 */}
+                      {/* 快捷管理控制按鈕列 */}
                       <div className="flex flex-wrap gap-1 pt-1 border-t border-gray-200/60 text-[10px]">
                         <button
                           onClick={() => handleUpdateStatus(p.id, 'thanksgiving')}
-                          className="bg-white hover:bg-purple-50 text-purple-800 border border-gray-200 px-2 py-1 rounded-lg font-bold transition flex items-center gap-0.5"
+                          className="bg-white hover:bg-purple-50 text-purple-800 border border-gray-200 px-2 py-1 rounded-lg font-bold transition flex items-center gap-0.5 cursor-pointer"
                         >
                           <Sparkles className="w-3 h-3 text-purple-600" /> 轉獻上感恩
                         </button>
                         <button
                           onClick={() => handleUpdateStatus(p.id, p.status === 'urgent' ? 'active' : 'urgent')}
-                          className="bg-white hover:bg-red-50 text-red-700 border border-gray-200 px-2 py-1 rounded-lg font-bold transition flex items-center gap-0.5"
+                          className="bg-white hover:bg-red-50 text-red-700 border border-gray-200 px-2 py-1 rounded-lg font-bold transition flex items-center gap-0.5 cursor-pointer"
                         >
                           <Flame className="w-3 h-3 text-red-500" /> 設為緊急
                         </button>
                         <button
                           onClick={() => handleTogglePrivate(p)}
-                          className="bg-white hover:bg-purple-50 text-purple-900 border border-gray-200 px-2 py-1 rounded-lg font-bold transition flex items-center gap-0.5"
+                          className="bg-white hover:bg-purple-50 text-purple-900 border border-gray-200 px-2 py-1 rounded-lg font-bold transition flex items-center gap-0.5 cursor-pointer"
                         >
                           <Lock className="w-3 h-3 text-purple-600" /> 權限/轉公禱
                         </button>
                         <button
                           onClick={() => handleDeletePrayer(p.id)}
-                          className="bg-white hover:bg-red-50 text-red-600 border border-gray-200 px-1.5 py-1 rounded-lg font-bold transition"
+                          className="bg-white hover:bg-red-50 text-red-600 border border-gray-200 px-1.5 py-1 rounded-lg font-bold transition cursor-pointer"
                           title="刪除代禱"
                         >
                           <Trash2 className="w-3 h-3" />
@@ -393,7 +509,6 @@ export default function PrayersPage() {
               )}
             </div>
           </div>
-
         </div>
       </main>
 
