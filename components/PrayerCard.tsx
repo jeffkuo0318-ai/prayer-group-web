@@ -1,5 +1,4 @@
 'use client';
-
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
@@ -14,6 +13,7 @@ import {
   Sparkles,
   User
 } from 'lucide-react';
+import MarkAnsweredModal from './MarkAnsweredModal'; // 1. 引入授權彈窗元件
 
 interface PrayerCardProps {
   prayer: any;
@@ -30,9 +30,12 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState('');
   const [loadingComment, setLoadingComment] = useState(false);
-
   const [members, setMembers] = useState<any[]>([]);
-  const isCreator = prayer.creator_id === currentUserId;
+
+  // 2. 控制標記蒙應允對話框的開啟狀態
+  const [isMarkAnsweredOpen, setIsMarkAnsweredOpen] = useState(false);
+
+  const isCreator = prayer.creator_id === currentUserId || prayer.user_id === currentUserId;
 
   // 1. 讀取主代禱事項阿們名單
   const fetchAmens = async () => {
@@ -41,11 +44,9 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         .from('amens')
         .select('user_id, profiles(full_name, email)')
         .eq('prayer_id', prayer.id);
-
       if (!error && data) {
         setAmenCount(data.length);
         setHasAmened(data.some((item: any) => item.user_id === currentUserId));
-
         const names = data.map((item: any) => {
           const profile = item.profiles;
           return profile?.full_name || profile?.email?.split('@')[0] || '小組肢體';
@@ -72,7 +73,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         `)
         .eq('prayer_id', prayer.id)
         .order('created_at', { ascending: true });
-
       if (!error && data) {
         setComments(data);
       } else if (error) {
@@ -104,7 +104,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
   const handleToggleAmen = async () => {
     if (!currentUserId || loadingAmen) return;
     setLoadingAmen(true);
-
     if (hasAmened) {
       await supabase
         .from('amens')
@@ -116,7 +115,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         .from('amens')
         .insert({ prayer_id: prayer.id, user_id: currentUserId });
     }
-
     await fetchAmens();
     setLoadingAmen(false);
   };
@@ -124,7 +122,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
   // 點擊 / 取消 單一留言的阿們 (LINE 式回應按讚)
   const handleToggleCommentAmen = async (commentId: string, isAlreadyAmened: boolean) => {
     if (!currentUserId) return;
-
     if (isAlreadyAmened) {
       await supabase
         .from('comment_amens')
@@ -136,7 +133,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         .from('comment_amens')
         .insert({ comment_id: commentId, user_id: currentUserId });
     }
-
     await fetchComments();
   };
 
@@ -144,15 +140,12 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !currentUserId || loadingComment) return;
-
     setLoadingComment(true);
-
     const { error } = await supabase.from('comments').insert({
       prayer_id: prayer.id,
       user_id: currentUserId,
       content: newComment.trim(),
     });
-
     if (!error) {
       setNewComment('');
       await fetchComments();
@@ -166,16 +159,13 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
   // 創作者點擊成員姓名：一鍵轉私禱並無痕排除該員
   const handleExcludeUser = async (targetUserId: string, targetUserName: string) => {
     if (!isCreator) return;
-
     if (
       !confirm(
         `確定要在此事項中排除「${targetUserName}」嗎？\n此事項將自動轉為私密代禱，且對方將完全無法察覺或檢視此內容。`
       )
     )
       return;
-
     let updatedAllowedIds: string[] = [];
-
     if (prayer.type === 'public') {
       updatedAllowedIds = members
         .map((m) => m.id)
@@ -186,15 +176,14 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         : members.map((m) => m.id);
       updatedAllowedIds = currentAllowed.filter((id: string) => id !== targetUserId);
     }
-
     const { error } = await supabase
       .from('prayers')
       .update({
         type: 'private',
+        is_private: true,
         allowed_user_ids: updatedAllowedIds,
       })
       .eq('id', prayer.id);
-
     if (!error) {
       alert(`🔒 已無痕排除「${targetUserName}」，此事項已轉為私密代禱。`);
       window.location.reload();
@@ -205,8 +194,8 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
 
   // 計算目前可查看此事項的肢體清單
   const visibleMembers = members.filter((m) => {
-    if (m.id === prayer.creator_id) return false;
-    if (prayer.type === 'public') return true;
+    if (m.id === prayer.creator_id || m.id === prayer.user_id) return false;
+    if (prayer.type === 'public' && !prayer.is_private) return true;
     return Array.isArray(prayer.allowed_user_ids) && prayer.allowed_user_ids.includes(m.id);
   });
 
@@ -247,15 +236,14 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         <div className="flex items-center gap-2">
           {getStatusBadge()}
           <span className="font-semibold text-gray-500 flex items-center gap-1 text-[11px]">
-            {prayer.type === 'private' ? (
+            {prayer.is_private || prayer.type === 'private' ? (
               <Lock className="w-3 h-3 text-purple-600" />
             ) : (
               <Globe className="w-3 h-3 text-amber-600" />
             )}
-            {prayer.type === 'private' ? '私密守望' : '公共代禱'}
+            {prayer.is_private || prayer.type === 'private' ? '私密守望' : '公共代禱'}
           </span>
         </div>
-
         <div className="flex items-center gap-2 text-[11px] text-gray-400">
           <span>{new Date(prayer.created_at).toLocaleDateString()}</span>
           <span>•</span>
@@ -271,39 +259,64 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         <p className="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap">
           {prayer.content}
         </p>
+        {/* 如果有補充見證說明則顯示 */}
+        {prayer.testimony_note && (
+          <div className="bg-amber-50/80 p-2.5 rounded-xl border border-amber-200 text-xs text-amber-900 mt-2 space-y-0.5">
+            <span className="font-bold flex items-center gap-1 text-[11px] text-amber-800">
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" /> 恩典見證補充：
+            </span>
+            <p className="text-[11px] leading-relaxed">{prayer.testimony_note}</p>
+          </div>
+        )}
       </div>
 
-      {/* 3. 創作者專屬：可檢視成員列表 & 點擊名字一鍵無痕排除 */}
+      {/* 3. 創作者專屬區塊：成員管理 & 標記蒙應允按鈕 */}
       {isCreator && (
-        <div className="bg-gray-50 border border-gray-200/60 rounded-xl p-2.5 text-[11px] space-y-1">
-          <div className="flex items-center justify-between text-gray-500 font-bold">
-            <span className="flex items-center gap-1">
-              <Users className="w-3.5 h-3.5 text-amber-600" />
-              目前參與此事項的肢體 ({visibleMembers.length} 人)
-            </span>
-            <span className="text-[10px] text-gray-400">💡 點擊成員姓名可一鍵無痕剔除</span>
-          </div>
+        <div className="space-y-2">
+          {/* 標記蒙應允按鈕 (僅當尚未標記為感恩/蒙應允時顯示) */}
+          {prayer.status !== 'thanksgiving' && prayer.status !== 'answered' && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsMarkAnsweredOpen(true)}
+                className="bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1 shadow-2xs"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                <span>🙌 標記禱告已蒙應允</span>
+              </button>
+            </div>
+          )}
 
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {visibleMembers.length === 0 ? (
-              <span className="text-gray-400 text-[10px]">無其他成員（僅您本人可見）</span>
-            ) : (
-              visibleMembers.map((m) => {
-                const name = m.full_name || m.email?.split('@')[0];
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => handleExcludeUser(m.id, name)}
-                    className="bg-white hover:bg-red-50 hover:text-red-600 hover:border-red-200 border border-gray-200 px-2 py-0.5 rounded-lg text-gray-700 font-medium transition flex items-center gap-1 group shadow-2xs"
-                    title={`點擊一鍵無痕排除 ${name}`}
-                  >
-                    <span>{name}</span>
-                    <UserX className="w-3 h-3 text-gray-400 group-hover:text-red-500" />
-                  </button>
-                );
-              })
-            )}
+          {/* 可檢視成員列表 & 點擊名字一鍵無痕排除 */}
+          <div className="bg-gray-50 border border-gray-200/60 rounded-xl p-2.5 text-[11px] space-y-1">
+            <div className="flex items-center justify-between text-gray-500 font-bold">
+              <span className="flex items-center gap-1">
+                <Users className="w-3.5 h-3.5 text-amber-600" />
+                目前參與此事項的肢體 ({visibleMembers.length} 人)
+              </span>
+              <span className="text-[10px] text-gray-400">💡 點擊成員姓名可一鍵無痕剔除</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {visibleMembers.length === 0 ? (
+                <span className="text-gray-400 text-[10px]">無其他成員（僅您本人可見）</span>
+              ) : (
+                visibleMembers.map((m) => {
+                  const name = m.full_name || m.email?.split('@')[0];
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => handleExcludeUser(m.id, name)}
+                      className="bg-white hover:bg-red-50 hover:text-red-600 hover:border-red-200 border border-gray-200 px-2 py-0.5 rounded-lg text-gray-700 font-medium transition flex items-center gap-1 group shadow-2xs"
+                      title={`點擊一鍵無痕排除 ${name}`}
+                    >
+                      <span>{name}</span>
+                      <UserX className="w-3 h-3 text-gray-400 group-hover:text-red-500" />
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -318,7 +331,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
                 c.profiles?.full_name ||
                 c.profiles?.email?.split('@')[0] ||
                 '小組肢體';
-
               const commentAmens = c.comment_amens || [];
               const commentAmenUsers = commentAmens.map((ca: any) =>
                 ca.profiles?.full_name || ca.profiles?.email?.split('@')[0] || '肢體'
@@ -326,7 +338,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
               const isCommentAmenedByMe = commentAmens.some(
                 (ca: any) => ca.user_id === currentUserId
               );
-
               return (
                 <div
                   key={c.id}
@@ -344,11 +355,9 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
                       })}
                     </span>
                   </div>
-
                   <p className="text-gray-700 text-[11px] leading-relaxed pl-4 pr-12">
                     {c.content}
                   </p>
-
                   <div className="flex items-center justify-between pt-1 pl-4 text-[10px]">
                     {commentAmenUsers.length > 0 ? (
                       <span className="text-amber-800 font-medium bg-amber-100/60 px-2 py-0.5 rounded-full flex items-center gap-1">
@@ -358,7 +367,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
                     ) : (
                       <span />
                     )}
-
                     <button
                       type="button"
                       onClick={() => handleToggleCommentAmen(c.id, isCommentAmenedByMe)}
@@ -420,7 +428,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
                 </span>
               )}
             </button>
-
             {amenUsers.length > 0 && (
               <span className="text-[11px] text-amber-800 font-medium bg-amber-50/60 px-2.5 py-1 rounded-xl border border-amber-100">
                 🙏 {amenUsers.join('、')}
@@ -429,6 +436,16 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
           </div>
         </div>
       </div>
+
+      {/* 6. 蒙應允授權對話框 Modal */}
+      <MarkAnsweredModal
+        isOpen={isMarkAnsweredOpen}
+        onClose={() => setIsMarkAnsweredOpen(false)}
+        prayerId={prayer.id}
+        prayerTitle={prayer.title}
+        isPrivatePrayer={prayer.is_private || prayer.type === 'private'}
+        onSuccess={() => window.location.reload()}
+      />
     </div>
   );
 }
