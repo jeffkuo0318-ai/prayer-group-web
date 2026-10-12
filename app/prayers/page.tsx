@@ -29,7 +29,7 @@ export default function PrayersPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'public' | 'private' | 'urgent' | 'thanksgiving'>('all');
 
-  // 聚焦檢視單一事項 ID (檢視單一事項模式)
+  // 聚焦檢視單一事項 ID
   const [focusedPrayerId, setFocusedPrayerId] = useState<string | null>(null);
 
   // Modals 狀態
@@ -47,7 +47,6 @@ export default function PrayersPage() {
       const role = user.user_metadata?.role;
       const userEmail = user.email || '';
 
-      // 檢查 Supabase auth metadata 中的 role，或比對專屬開發者最高權限帳號 Email
       if (
         role === 'admin' ||
         role === 'leader' ||
@@ -56,7 +55,7 @@ export default function PrayersPage() {
         setIsAdminOrLeader(true);
       }
 
-      // 檢查 User profile 是否已填寫真實姓名與小組，未填寫則強制跳出 Modal 要求補充
+      // 檢查 User profile 是否已填寫真實姓名與小組
       const { data: profile } = await supabase
         .from('profiles')
         .select('full_name, group_name, role')
@@ -64,7 +63,6 @@ export default function PrayersPage() {
         .single();
 
       if (profile) {
-        // 若 profile 資料表有紀錄小家長/管理員角色，亦同步開通權限
         if (profile.role === 'admin' || profile.role === 'leader') {
           setIsAdminOrLeader(true);
         }
@@ -76,7 +74,7 @@ export default function PrayersPage() {
       }
     }
 
-    // 2. 抓取代禱事項 (由 Supabase RLS 控制讀取權限)
+    // 2. 抓取代禱事項
     const { data, error } = await supabase
       .from('prayers')
       .select('*')
@@ -111,14 +109,12 @@ export default function PrayersPage() {
   // 快捷操作：切換公私密權限
   const handleTogglePrivate = async (prayer: any) => {
     if (prayer.is_private || prayer.type === 'private') {
-      // 轉為一般公禱
       const { error } = await supabase
         .from('prayers')
         .update({ is_private: false, type: 'public' })
         .eq('id', prayer.id);
       if (!error) fetchPrayersAndUser();
     } else {
-      // 轉為私密代禱，打開選取肢體權限的 Modal
       setEditingPrayerForAccess(prayer);
     }
   };
@@ -162,7 +158,7 @@ export default function PrayersPage() {
 
   return (
     <div className="min-h-screen bg-gray-50/60 pb-20 font-sans">
-      {/* 1. 頂部導覽 Bar (含返回首頁、管理後台入口與我要代禱) */}
+      {/* 1. 頂部導覽 Bar (保留唯一且明確的「+ 我要代禱」按鈕) */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -188,7 +184,7 @@ export default function PrayersPage() {
             )}
             <button
               onClick={() => setIsCreateOpen(true)}
-              className="bg-amber-500 hover:bg-amber-600 text-white text-xs md:text-sm font-bold px-3.5 py-1.5 rounded-xl shadow-sm transition flex items-center gap-1 cursor-pointer"
+              className="bg-amber-500 hover:bg-amber-600 text-white text-xs md:text-sm font-bold px-4 py-2 rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" /> 我要代禱
             </button>
@@ -197,7 +193,7 @@ export default function PrayersPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        {/* 2. 📊 全網守望狀態概況 (統計數據卡片區塊) */}
+        {/* 2. 📊 全網守望狀態概況 (統計數據與快捷過濾卡片) */}
         <div className="bg-slate-900 text-white p-4 md:p-5 rounded-3xl shadow-sm space-y-3">
           <div className="flex items-center justify-between text-xs text-slate-300 font-semibold">
             <span className="flex items-center gap-1.5">
@@ -269,47 +265,11 @@ export default function PrayersPage() {
           </div>
         </div>
 
-        {/* 3. 🌟 三大直覺入口 */}
-        <div className="grid grid-cols-3 gap-2.5 md:gap-4">
-          <button
-            onClick={() => setIsCreateOpen(true)}
-            className="bg-amber-500 hover:bg-amber-600 text-white p-3.5 md:p-5 rounded-2xl md:rounded-3xl shadow-sm text-center transition space-y-1 cursor-pointer"
-          >
-            <div className="text-lg md:text-2xl font-bold">🙏</div>
-            <div className="text-xs md:text-base font-bold">我要代禱</div>
-            <div className="text-[10px] md:text-xs text-amber-100 hidden sm:block">發起需要守望事項</div>
-          </button>
-
-          <button
-            onClick={() => {
-              setFocusedPrayerId(null);
-              setFilter('all');
-            }}
-            className="bg-white hover:bg-gray-50 text-gray-800 border border-gray-200 p-3.5 md:p-5 rounded-2xl md:rounded-3xl shadow-sm text-center transition space-y-1 cursor-pointer"
-          >
-            <div className="text-lg md:text-2xl font-bold text-amber-600">❤️</div>
-            <div className="text-xs md:text-base font-bold">為肢體守望</div>
-            <div className="text-[10px] md:text-xs text-gray-400 hidden sm:block">瀏覽同心阿們代禱</div>
-          </button>
-
-          <button
-            onClick={() => {
-              setFocusedPrayerId(null);
-              setFilter('thanksgiving');
-            }}
-            className="bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 p-3.5 md:p-5 rounded-2xl md:rounded-3xl shadow-sm text-center transition space-y-1 cursor-pointer"
-          >
-            <div className="text-lg md:text-2xl font-bold">🙌</div>
-            <div className="text-xs md:text-base font-bold">感恩見證</div>
-            <div className="text-[10px] md:text-xs text-purple-600 hidden sm:block">數算上帝奇妙恩典</div>
-          </button>
-        </div>
-
-        {/* 4. 主區塊：左側禱告牆 (2/3) + 右側私密代禱清單管理面板 (1/3) */}
+        {/* 3. 主區塊：左側禱告牆 (2/3) + 右側私密代禱清單管理面板 (1/3) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           {/* 左側：禱告牆與單一焦點檢視模式 */}
           <div className="lg:col-span-2 space-y-4">
-            {/* 標籤過濾 Bar */}
+            {/* 統一的分類標籤過濾 Bar */}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs md:text-sm">
                 <button
@@ -399,7 +359,7 @@ export default function PrayersPage() {
             ) : filteredPrayers.length === 0 ? (
               <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-gray-300 p-6 space-y-2">
                 <p className="text-gray-500 text-sm md:text-base font-medium">目前尚無此分類事項</p>
-                <p className="text-xs text-gray-400">成為第一個分享或發起代禱的人吧！</p>
+                <p className="text-xs text-gray-400">點擊右上角「+ 我要代禱」成為第一個分享的人吧！</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -414,7 +374,7 @@ export default function PrayersPage() {
             )}
           </div>
 
-          {/* 右側：私密代禱管理面板 (含快速切換狀態、編輯權限、刪除控制項) */}
+          {/* 右側：私密代禱管理面板 */}
           <div className="space-y-4">
             <div className="bg-white border border-amber-200/80 rounded-3xl p-5 shadow-sm space-y-4">
               <div className="flex items-center justify-between border-b border-gray-100 pb-3">
