@@ -80,10 +80,13 @@ export default function CreatePrayerModal({
     const authorName =
       profile?.full_name || profile?.email?.split('@')[0] || '小組肢體';
 
+    // 寫入 Supabase，確保包含完整的 RLS 與權限相關欄位
     const { error } = await supabase.from('prayers').insert({
       creator_id: currentUserId,
+      user_id: currentUserId,                             // ⚠️ 補上 user_id (外鍵關聯至 auth.users)
       author_name: authorName,
       type,
+      is_private: type === 'private',                     // ⚠️ 補上 is_private (布林值，供 Supabase RLS 判定)
       title: title.trim(),
       content: content.trim(),
       status: prayerStatus,
