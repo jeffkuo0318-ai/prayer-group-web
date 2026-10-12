@@ -11,9 +11,10 @@ import {
   Users,
   CheckCircle,
   Sparkles,
-  User
+  User,
+  MessageSquare
 } from 'lucide-react';
-import MarkAnsweredModal from './MarkAnsweredModal'; // 1. 引入授權彈窗元件
+import MarkAnsweredModal from './MarkAnsweredModal';
 
 interface PrayerCardProps {
   prayer: any;
@@ -30,14 +31,14 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState('');
   const [loadingComment, setLoadingComment] = useState(false);
+  const [showAllComments, setShowAllComments] = useState(false); // 控制留言展開/折疊
   const [members, setMembers] = useState<any[]>([]);
 
-  // 2. 控制標記蒙應允對話框的開啟狀態
+  // 標記蒙應允對話框
   const [isMarkAnsweredOpen, setIsMarkAnsweredOpen] = useState(false);
 
   const isCreator = prayer.creator_id === currentUserId || prayer.user_id === currentUserId;
 
-  // 1. 讀取主代禱事項阿們名單
   const fetchAmens = async () => {
     try {
       const { data, error } = await supabase
@@ -58,7 +59,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
     }
   };
 
-  // 2. 讀取留言紀錄與專屬阿們
   const fetchComments = async () => {
     try {
       const { data, error } = await supabase
@@ -75,15 +75,12 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         .order('created_at', { ascending: true });
       if (!error && data) {
         setComments(data);
-      } else if (error) {
-        console.error('Fetch comments error:', error.message);
       }
     } catch (e) {
       console.error('Error fetching comments:', e);
     }
   };
 
-  // 3. 讀取小組成員 (供創作者一鍵無痕排除)
   const fetchAllMembers = async () => {
     const { data } = await supabase
       .from('profiles')
@@ -100,7 +97,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
     }
   }, [prayer?.id, currentUserId]);
 
-  // 點擊 / 取消 主代禱事項阿們
   const handleToggleAmen = async () => {
     if (!currentUserId || loadingAmen) return;
     setLoadingAmen(true);
@@ -119,7 +115,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
     setLoadingAmen(false);
   };
 
-  // 點擊 / 取消 單一留言的阿們 (LINE 式回應按讚)
   const handleToggleCommentAmen = async (commentId: string, isAlreadyAmened: boolean) => {
     if (!currentUserId) return;
     if (isAlreadyAmened) {
@@ -136,7 +131,6 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
     await fetchComments();
   };
 
-  // 送出新關懷留言 (含明確錯誤警示)
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !currentUserId || loadingComment) return;
@@ -150,21 +144,14 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
       setNewComment('');
       await fetchComments();
     } else {
-      alert(`留言發表失敗：${error.message}`);
-      console.error('Comment insert error:', error);
+      alert(`留言失敗：${error.message}`);
     }
     setLoadingComment(false);
   };
 
-  // 創作者點擊成員姓名：一鍵轉私禱並無痕排除該員
   const handleExcludeUser = async (targetUserId: string, targetUserName: string) => {
     if (!isCreator) return;
-    if (
-      !confirm(
-        `確定要在此事項中排除「${targetUserName}」嗎？\n此事項將自動轉為私密代禱，且對方將完全無法察覺或檢視此內容。`
-      )
-    )
-      return;
+    if (!confirm(`確定要排除「${targetUserName}」嗎？事項將轉為私密代禱。`)) return;
     let updatedAllowedIds: string[] = [];
     if (prayer.type === 'public') {
       updatedAllowedIds = members
@@ -185,251 +172,178 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
       })
       .eq('id', prayer.id);
     if (!error) {
-      alert(`🔒 已無痕排除「${targetUserName}」，此事項已轉為私密代禱。`);
+      alert(`🔒 已無痕排除「${targetUserName}」。`);
       window.location.reload();
-    } else {
-      alert(`排除失敗：${error.message}`);
     }
   };
 
-  // 計算目前可查看此事項的肢體清單
   const visibleMembers = members.filter((m) => {
     if (m.id === prayer.creator_id || m.id === prayer.user_id) return false;
     if (prayer.type === 'public' && !prayer.is_private) return true;
     return Array.isArray(prayer.allowed_user_ids) && prayer.allowed_user_ids.includes(m.id);
   });
 
-  // 狀態標籤樣式
   const getStatusBadge = () => {
     switch (prayer.status) {
       case 'urgent':
         return (
-          <span className="bg-red-100 text-red-600 border border-red-200 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5">
-            <Flame className="w-3 h-3" /> 迫切緊急
+          <span className="bg-red-100 text-red-700 border border-red-200 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
+            <Flame className="w-3.5 h-3.5" /> 迫切緊急
           </span>
         );
       case 'answered':
         return (
-          <span className="bg-green-100 text-green-700 border border-green-200 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5">
-            <CheckCircle className="w-3 h-3" /> 蒙應允
+          <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
+            <CheckCircle className="w-3.5 h-3.5" /> 蒙應允
           </span>
         );
       case 'thanksgiving':
         return (
-          <span className="bg-purple-100 text-purple-700 border border-purple-200 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5">
-            <Sparkles className="w-3 h-3" /> 獻上感恩
+          <span className="bg-purple-100 text-purple-800 border border-purple-200 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
+            <Sparkles className="w-3.5 h-3.5" /> 獻上感恩
           </span>
         );
       default:
         return (
-          <span className="bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-bold px-2 py-0.5 rounded-full">
+          <span className="bg-amber-100 text-amber-900 border border-amber-200 text-xs font-bold px-2.5 py-1 rounded-full">
             禱告中
           </span>
         );
     }
   };
 
+  // 留言無滾動條自然延伸邏輯：預設最多顯示 2 條，點擊展開全部
+  const displayedComments = showAllComments ? comments : comments.slice(-2);
+
   return (
-    <div className="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-sm hover:shadow-md transition space-y-3">
-      {/* 1. 頂部資訊列 */}
-      <div className="flex items-center justify-between text-xs">
+    <div className="bg-white border border-gray-200 rounded-3xl p-5 md:p-6 shadow-sm hover:shadow-md transition space-y-4">
+      {/* 1. 頂部資訊列 (極簡化、字體不小於 14px) */}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <div className="flex items-center gap-2">
           {getStatusBadge()}
-          <span className="font-semibold text-gray-500 flex items-center gap-1 text-[11px]">
+          <span className="font-semibold text-gray-600 flex items-center gap-1 text-xs md:text-sm">
             {prayer.is_private || prayer.type === 'private' ? (
-              <Lock className="w-3 h-3 text-purple-600" />
+              <Lock className="w-3.5 h-3.5 text-purple-600" />
             ) : (
-              <Globe className="w-3 h-3 text-amber-600" />
+              <Globe className="w-3.5 h-3.5 text-amber-600" />
             )}
             {prayer.is_private || prayer.type === 'private' ? '私密守望' : '公共代禱'}
           </span>
         </div>
-        <div className="flex items-center gap-2 text-[11px] text-gray-400">
-          <span>{new Date(prayer.created_at).toLocaleDateString()}</span>
-          <span>•</span>
+        <div className="text-xs md:text-sm text-gray-400">
           <span>PO 文者：{prayer.author_name || prayer.profiles?.full_name || '小組肢體'}</span>
+          <span className="mx-1">•</span>
+          <span>{new Date(prayer.created_at).toLocaleDateString()}</span>
         </div>
       </div>
 
-      {/* 2. 代禱事項標題與內容 */}
-      <div className="space-y-1">
-        <h3 className="text-sm font-bold text-gray-900 leading-snug">
+      {/* 2. 代禱事項標題與內容 (正文升級至 16px text-base) */}
+      <div className="space-y-2">
+        <h3 className="text-base md:text-lg font-bold text-gray-900 leading-snug">
           {prayer.title}
         </h3>
-        <p className="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap">
+        <p className="text-base text-gray-700 leading-relaxed whitespace-pre-wrap">
           {prayer.content}
         </p>
-        {/* 如果有補充見證說明則顯示 */}
+
         {prayer.testimony_note && (
-          <div className="bg-amber-50/80 p-2.5 rounded-xl border border-amber-200 text-xs text-amber-900 mt-2 space-y-0.5">
-            <span className="font-bold flex items-center gap-1 text-[11px] text-amber-800">
-              <Sparkles className="w-3.5 h-3.5 text-amber-600" /> 恩典見證補充：
+          <div className="bg-amber-50/90 p-3.5 rounded-2xl border border-amber-200 text-sm text-amber-900 mt-2 space-y-1">
+            <span className="font-bold flex items-center gap-1.5 text-amber-800">
+              <Sparkles className="w-4 h-4 text-amber-600" /> 恩典見證補充：
             </span>
-            <p className="text-[11px] leading-relaxed">{prayer.testimony_note}</p>
+            <p className="leading-relaxed">{prayer.testimony_note}</p>
           </div>
         )}
       </div>
 
-      {/* 3. 創作者專屬區塊：成員管理 & 標記蒙應允按鈕 */}
-      {isCreator && (
-        <div className="space-y-2">
-          {/* 標記蒙應允按鈕 (僅當尚未標記為感恩/蒙應允時顯示) */}
-          {prayer.status !== 'thanksgiving' && prayer.status !== 'answered' && (
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsMarkAnsweredOpen(true)}
-                className="bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold px-3 py-1.5 rounded-xl transition flex items-center gap-1 shadow-2xs"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                <span>🙌 標記禱告已蒙應允</span>
-              </button>
-            </div>
-          )}
-
-          {/* 可檢視成員列表 & 點擊名字一鍵無痕排除 */}
-          <div className="bg-gray-50 border border-gray-200/60 rounded-xl p-2.5 text-[11px] space-y-1">
-            <div className="flex items-center justify-between text-gray-500 font-bold">
-              <span className="flex items-center gap-1">
-                <Users className="w-3.5 h-3.5 text-amber-600" />
-                目前參與此事項的肢體 ({visibleMembers.length} 人)
-              </span>
-              <span className="text-[10px] text-gray-400">💡 點擊成員姓名可一鍵無痕剔除</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {visibleMembers.length === 0 ? (
-                <span className="text-gray-400 text-[10px]">無其他成員（僅您本人可見）</span>
-              ) : (
-                visibleMembers.map((m) => {
-                  const name = m.full_name || m.email?.split('@')[0];
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => handleExcludeUser(m.id, name)}
-                      className="bg-white hover:bg-red-50 hover:text-red-600 hover:border-red-200 border border-gray-200 px-2 py-0.5 rounded-lg text-gray-700 font-medium transition flex items-center gap-1 group shadow-2xs"
-                      title={`點擊一鍵無痕排除 ${name}`}
-                    >
-                      <span>{name}</span>
-                      <UserX className="w-3 h-3 text-gray-400 group-hover:text-red-500" />
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
+      {/* 3. 創作者管理按鈕 (標記蒙應允) */}
+      {isCreator && prayer.status !== 'thanksgiving' && prayer.status !== 'answered' && (
+        <div className="pt-1 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setIsMarkAnsweredOpen(true)}
+            className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-sm font-bold px-4 py-2 rounded-xl transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+          >
+            <Sparkles className="w-4 h-4 text-amber-600" />
+            <span>🙌 標記禱告已蒙應允</span>
+          </button>
         </div>
       )}
 
-      {/* 4. 關懷留言區 */}
-      <div className="space-y-2.5 pt-2 border-t border-gray-100">
-        {/* 歷史留言列表 */}
+      {/* 4. 關懷留言區 (自然延伸不含捲軸) */}
+      <div className="space-y-3 pt-3 border-t border-gray-100">
         {comments.length > 0 && (
-          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-            {comments.map((c) => {
-              const authorName =
-                c.profiles?.full_name ||
-                c.profiles?.email?.split('@')[0] ||
-                '小組肢體';
+          <div className="space-y-2.5">
+            {comments.length > 2 && !showAllComments && (
+              <button
+                type="button"
+                onClick={() => setShowAllComments(true)}
+                className="text-xs font-bold text-amber-700 hover:underline flex items-center gap-1 py-1"
+              >
+                <MessageSquare className="w-3.5 h-3.5" /> 展開其餘 {comments.length - 2} 條肢體關懷...
+              </button>
+            )}
+
+            {displayedComments.map((c) => {
+              const authorName = c.profiles?.full_name || c.profiles?.email?.split('@')[0] || '小組肢體';
               const commentAmens = c.comment_amens || [];
-              const commentAmenUsers = commentAmens.map((ca: any) =>
-                ca.profiles?.full_name || ca.profiles?.email?.split('@')[0] || '肢體'
-              );
-              const isCommentAmenedByMe = commentAmens.some(
-                (ca: any) => ca.user_id === currentUserId
-              );
+              const isCommentAmenedByMe = commentAmens.some((ca: any) => ca.user_id === currentUserId);
               return (
-                <div
-                  key={c.id}
-                  className="bg-gray-50/80 p-2.5 rounded-xl space-y-1.5 text-xs border border-gray-100 relative"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-gray-800 flex items-center gap-1 text-[11px]">
-                      <User className="w-3 h-3 text-amber-600" />
-                      {authorName}
+                <div key={c.id} className="bg-gray-50 p-3 rounded-2xl space-y-1.5 border border-gray-100">
+                  <div className="flex items-center justify-between text-xs text-gray-500 font-medium">
+                    <span className="font-bold text-gray-800 flex items-center gap-1 text-sm">
+                      <User className="w-3.5 h-3.5 text-amber-600" /> {authorName}
                     </span>
-                    <span className="text-[10px] text-gray-400">
-                      {new Date(c.created_at).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
+                    <span>{new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
-                  <p className="text-gray-700 text-[11px] leading-relaxed pl-4 pr-12">
-                    {c.content}
-                  </p>
-                  <div className="flex items-center justify-between pt-1 pl-4 text-[10px]">
-                    {commentAmenUsers.length > 0 ? (
-                      <span className="text-amber-800 font-medium bg-amber-100/60 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <span>🙏</span>
-                        <span>{commentAmenUsers.join('、')}</span>
-                      </span>
-                    ) : (
-                      <span />
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleToggleCommentAmen(c.id, isCommentAmenedByMe)}
-                      className={`flex items-center gap-1 px-2 py-0.5 rounded-full transition font-semibold ${
-                        isCommentAmenedByMe
-                          ? 'bg-amber-500 text-white shadow-sm'
-                          : 'bg-white border border-gray-200 text-gray-500 hover:bg-amber-50 hover:text-amber-600'
-                      }`}
-                      title="對此留言回應阿們"
-                    >
-                      <Heart className={`w-3 h-3 ${isCommentAmenedByMe ? 'fill-white' : ''}`} />
-                      <span>阿們</span>
-                      {commentAmens.length > 0 && <span>{commentAmens.length}</span>}
-                    </button>
-                  </div>
+                  <p className="text-sm text-gray-700 leading-relaxed">{c.content}</p>
                 </div>
               );
             })}
           </div>
         )}
 
-        {/* 發表關懷留言輸入框 */}
-        <form onSubmit={handleAddComment} className="flex gap-2">
+        {/* 發表留言框 */}
+        <form onSubmit={handleAddComment} className="flex gap-2 pt-1">
           <input
             type="text"
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
-            placeholder="寫下您的關懷或守望文字..."
-            className="flex-grow bg-gray-50 border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-amber-500"
+            placeholder="寫下關懷或同心禱告文字..."
+            className="flex-grow bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-amber-500"
           />
           <button
             type="submit"
             disabled={loadingComment || !newComment.trim()}
-            className="bg-amber-500 hover:bg-amber-600 disabled:bg-gray-300 text-white px-3.5 py-2 rounded-xl font-bold text-xs flex items-center gap-1 transition shrink-0 cursor-pointer"
+            className="bg-amber-500 hover:bg-amber-600 disabled:bg-gray-300 text-white px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-1 transition shrink-0 cursor-pointer"
           >
-            <Send className="w-3 h-3" />
-            {loadingComment ? '發布中...' : '發布'}
+            <Send className="w-3.5 h-3.5" /> 發布
           </button>
         </form>
 
-        {/* 5. 底部：主代禱事項阿們按鈕 */}
-        <div className="flex items-center justify-between pt-1 text-xs">
+        {/* 5. 底部同心阿們按鈕 */}
+        <div className="flex items-center justify-between pt-2">
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={handleToggleAmen}
               disabled={loadingAmen}
-              className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold transition cursor-pointer ${
                 hasAmened
                   ? 'bg-amber-500 text-white shadow-sm'
-                  : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200/80'
+                  : 'bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200'
               }`}
             >
-              <Heart className={`w-3.5 h-3.5 ${hasAmened ? 'fill-white' : ''}`} />
+              <Heart className={`w-4 h-4 ${hasAmened ? 'fill-white' : ''}`} />
               <span>{hasAmened ? '已同心阿們' : '同心阿們'}</span>
               {amenCount > 0 && (
-                <span className="text-[10px] bg-white/30 px-1.5 rounded-full">
+                <span className="text-xs bg-white/30 px-2 py-0.5 rounded-full ml-0.5">
                   {amenCount}
                 </span>
               )}
             </button>
             {amenUsers.length > 0 && (
-              <span className="text-[11px] text-amber-800 font-medium bg-amber-50/60 px-2.5 py-1 rounded-xl border border-amber-100">
+              <span className="text-xs text-amber-900 font-medium bg-amber-50 px-3 py-1.5 rounded-xl border border-amber-100">
                 🙏 {amenUsers.join('、')}
               </span>
             )}
@@ -437,7 +351,7 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         </div>
       </div>
 
-      {/* 6. 蒙應允授權對話框 Modal */}
+      {/* 蒙應允對話框 */}
       <MarkAnsweredModal
         isOpen={isMarkAnsweredOpen}
         onClose={() => setIsMarkAnsweredOpen(false)}
