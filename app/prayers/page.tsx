@@ -27,7 +27,7 @@ export default function PrayersPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isAdminOrLeader, setIsAdminOrLeader] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'public' | 'private' | 'urgent' | 'thanksgiving'>('all');
+  const [filter, setFilter] = useState<'all' | 'urgent' | 'public' | 'private' | 'answered' | 'thanksgiving'>('all');
 
   // 聚焦檢視單一事項 ID
   const [focusedPrayerId, setFocusedPrayerId] = useState<string | null>(null);
@@ -131,12 +131,16 @@ export default function PrayersPage() {
     }
   };
 
-  // 數據統計計算
+  // 📊 數據統計計算（狀態精準隔離）
   const stats = {
-    active: prayers.filter((p) => p.status === 'active' || !p.status).length,
-    answered: prayers.filter((p) => p.status === 'answered').length,
-    thanksgiving: prayers.filter((p) => p.status === 'thanksgiving').length,
+    // 進行中的禱告 (排除已蒙應允與已轉感恩)
+    active: prayers.filter((p) => p.status !== 'answered' && p.status !== 'thanksgiving').length,
+    // 進行中的迫切緊急
     urgent: prayers.filter((p) => p.status === 'urgent').length,
+    // 蒙應允 (獨立計算，不與感恩見證混在一起)
+    answered: prayers.filter((p) => p.status === 'answered').length,
+    // 獻上感恩見證
+    thanksgiving: prayers.filter((p) => p.status === 'thanksgiving').length,
   };
 
   // 私密事項清單（供右側面板管理者/創作者檢視）
@@ -146,19 +150,48 @@ export default function PrayersPage() {
       (p.user_id === currentUser?.id || p.creator_id === currentUser?.id || isAdminOrLeader)
   );
 
-  // 依標籤篩選
+  // 🎯 依標籤分頁嚴格過濾（不可摻雜、重複）
   const filteredPrayers = prayers.filter((p) => {
+    // 若處於單一卡片聚焦模式，只列出該卡片
     if (focusedPrayerId) return p.id === focusedPrayerId;
-    if (filter === 'public') return !p.is_private && p.type !== 'private';
-    if (filter === 'private') return p.is_private || p.type === 'private';
-    if (filter === 'urgent') return p.status === 'urgent';
-    if (filter === 'thanksgiving') return p.status === 'thanksgiving' || p.status === 'answered';
+
+    // 1. 全部代禱：包含所有進行中的禱告（一般公禱、私密代禱、迫切緊急）。
+    //    【重點規則】：蒙應允 (answered) 與感恩見證 (thanksgiving) 已完成階段，必須排除移至專屬分頁！
+    if (filter === 'all') {
+      return p.status !== 'answered' && p.status !== 'thanksgiving';
+    }
+
+    // 2. 迫切緊急：進行中且狀態為緊急
+    if (filter === 'urgent') {
+      return p.status === 'urgent';
+    }
+
+    // 3. 一般公禱：進行中、非私密
+    if (filter === 'public') {
+      return (!p.is_private && p.type !== 'private') && (p.status !== 'answered' && p.status !== 'thanksgiving');
+    }
+
+    // 4. 私密代禱：進行中、私密
+    if (filter === 'private') {
+      return (p.is_private || p.type === 'private') && (p.status !== 'answered' && p.status !== 'thanksgiving');
+    }
+
+    // 5. 蒙應允：獨立分頁，僅存放已蒙應允事項
+    if (filter === 'answered') {
+      return p.status === 'answered';
+    }
+
+    // 6. 感恩見證牆：獨立分頁，僅存放已轉感恩見證事項
+    if (filter === 'thanksgiving') {
+      return p.status === 'thanksgiving';
+    }
+
     return true;
   });
 
   return (
     <div className="min-h-screen bg-gray-50/60 pb-20 font-sans">
-      {/* 1. 頂部導覽 Bar (保留唯一且明確的「+ 我要代禱」按鈕) */}
+      {/* 1. 頂部導覽 Bar */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -193,7 +226,7 @@ export default function PrayersPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        {/* 2. 📊 全網守望狀態概況 (統計數據與快捷過濾卡片) */}
+        {/* 2. 📊 全網守望狀態概況 (調整順序：迫切緊急移至左二，蒙應允與感恩獨立) */}
         <div className="bg-slate-900 text-white p-4 md:p-5 rounded-3xl shadow-sm space-y-3">
           <div className="flex items-center justify-between text-xs text-slate-300 font-semibold">
             <span className="flex items-center gap-1.5">
@@ -203,6 +236,7 @@ export default function PrayersPage() {
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {/* 1. 禱告中 */}
             <div
               onClick={() => {
                 setFocusedPrayerId(null);
@@ -218,36 +252,7 @@ export default function PrayersPage() {
               <span className="text-lg md:text-xl font-black text-amber-400">{stats.active}</span>
             </div>
 
-            <div
-              onClick={() => {
-                setFocusedPrayerId(null);
-                setFilter('thanksgiving');
-              }}
-              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${
-                filter === 'thanksgiving' ? 'ring-2 ring-emerald-400' : ''
-              }`}
-            >
-              <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
-                <CheckCircle className="w-4 h-4 text-emerald-400" /> 🌱 蒙應允
-              </span>
-              <span className="text-lg md:text-xl font-black text-emerald-400">{stats.answered}</span>
-            </div>
-
-            <div
-              onClick={() => {
-                setFocusedPrayerId(null);
-                setFilter('thanksgiving');
-              }}
-              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${
-                filter === 'thanksgiving' ? 'ring-2 ring-purple-400' : ''
-              }`}
-            >
-              <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
-                <Sparkles className="w-4 h-4 text-purple-400" /> 🙌 獻上感恩
-              </span>
-              <span className="text-lg md:text-xl font-black text-purple-400">{stats.thanksgiving}</span>
-            </div>
-
+            {/* 2. 迫切緊急 (已調整移至左側第二個位置) */}
             <div
               onClick={() => {
                 setFocusedPrayerId(null);
@@ -262,6 +267,38 @@ export default function PrayersPage() {
               </span>
               <span className="text-lg md:text-xl font-black text-red-400">{stats.urgent}</span>
             </div>
+
+            {/* 3. 蒙應允 */}
+            <div
+              onClick={() => {
+                setFocusedPrayerId(null);
+                setFilter('answered');
+              }}
+              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${
+                filter === 'answered' ? 'ring-2 ring-emerald-400' : ''
+              }`}
+            >
+              <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
+                <CheckCircle className="w-4 h-4 text-emerald-400" /> 🌱 蒙應允
+              </span>
+              <span className="text-lg md:text-xl font-black text-emerald-400">{stats.answered}</span>
+            </div>
+
+            {/* 4. 獻上感恩 */}
+            <div
+              onClick={() => {
+                setFocusedPrayerId(null);
+                setFilter('thanksgiving');
+              }}
+              className={`bg-slate-800/80 hover:bg-slate-800 p-3.5 rounded-2xl border border-slate-700/80 cursor-pointer transition flex items-center justify-between ${
+                filter === 'thanksgiving' ? 'ring-2 ring-purple-400' : ''
+              }`}
+            >
+              <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
+                <Sparkles className="w-4 h-4 text-purple-400" /> 🙌 獻上感恩
+              </span>
+              <span className="text-lg md:text-xl font-black text-purple-400">{stats.thanksgiving}</span>
+            </div>
           </div>
         </div>
 
@@ -269,7 +306,7 @@ export default function PrayersPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           {/* 左側：禱告牆與單一焦點檢視模式 */}
           <div className="lg:col-span-2 space-y-4">
-            {/* 統一的分類標籤過濾 Bar */}
+            {/* 🏷️ 精準分類標籤 Bar（迫切緊急移至左二，新增獨立蒙應允） */}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs md:text-sm">
                 <button
@@ -285,32 +322,8 @@ export default function PrayersPage() {
                 >
                   全部代禱
                 </button>
-                <button
-                  onClick={() => {
-                    setFocusedPrayerId(null);
-                    setFilter('public');
-                  }}
-                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${
-                    filter === 'public'
-                      ? 'bg-amber-500 text-white shadow-xs'
-                      : 'bg-white border text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  <Globe className="w-3.5 h-3.5" /> 一般公禱
-                </button>
-                <button
-                  onClick={() => {
-                    setFocusedPrayerId(null);
-                    setFilter('private');
-                  }}
-                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${
-                    filter === 'private'
-                      ? 'bg-purple-600 text-white shadow-xs'
-                      : 'bg-white border text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  <Lock className="w-3.5 h-3.5" /> 私密代禱
-                </button>
+
+                {/* 迫切緊急 移至左邊第二位 */}
                 <button
                   onClick={() => {
                     setFocusedPrayerId(null);
@@ -324,6 +337,51 @@ export default function PrayersPage() {
                 >
                   <Flame className="w-3.5 h-3.5" /> 迫切緊急
                 </button>
+
+                <button
+                  onClick={() => {
+                    setFocusedPrayerId(null);
+                    setFilter('public');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${
+                    filter === 'public'
+                      ? 'bg-amber-500 text-white shadow-xs'
+                      : 'bg-white border text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5" /> 一般公禱
+                </button>
+
+                <button
+                  onClick={() => {
+                    setFocusedPrayerId(null);
+                    setFilter('private');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${
+                    filter === 'private'
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'bg-white border text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5" /> 私密代禱
+                </button>
+
+                {/* 獨立新增：蒙應允 分頁 */}
+                <button
+                  onClick={() => {
+                    setFocusedPrayerId(null);
+                    setFilter('answered');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer ${
+                    filter === 'answered'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-white border text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <CheckCircle className="w-3.5 h-3.5" /> 蒙應允
+                </button>
+
+                {/* 獨立：感恩見證牆 分頁 */}
                 <button
                   onClick={() => {
                     setFocusedPrayerId(null);
