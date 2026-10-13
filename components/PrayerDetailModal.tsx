@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { X, Heart, MessageCircle, Plus, Clock, Send } from 'lucide-react';
+import { X, Heart, MessageCircle, Plus, Clock, Globe, Lock, Send } from 'lucide-react';
 
 interface PrayerDetailModalProps {
   isOpen: boolean;
@@ -30,23 +30,16 @@ export default function PrayerDetailModal({
 
   if (!isOpen || !prayer) return null;
 
-  // 安全抓取詳情資料 (加入 Try-Catch 全面防呆，絕對不讓畫面崩潰)
   const fetchDetailData = async () => {
     try {
-      // 1. 卡片主阿們數
-      const { data: amens } = await supabase
-        .from('prayer_amens')
-        .select('*')
-        .eq('prayer_id', prayer.id);
-
+      // 1. 阿們數
+      const { data: amens } = await supabase.from('prayer_amens').select('*').eq('prayer_id', prayer.id);
       if (amens) {
         setAmenCount(amens.length);
-        if (currentUserId) {
-          setHasAmened(amens.some((a) => a.user_id === currentUserId));
-        }
+        if (currentUserId) setHasAmened(amens.some((a) => a.user_id === currentUserId));
       }
 
-      // 2. 留言串 (安全查詢)
+      // 2. 留言串 (自動帶入發言者真實姓名)
       const { data: commentData } = await supabase
         .from('prayer_comments')
         .select('*')
@@ -54,74 +47,61 @@ export default function PrayerDetailModal({
         .order('created_at', { ascending: true });
 
       if (commentData) {
-        const safeComments = commentData.map((c) => ({
-          ...c,
-          authorName: c.creator_name || '主內肢體',
-          amenCount: 0,
-          hasAmened: false,
-        }));
-        setComments(safeComments);
+        const enrichedComments = await Promise.all(
+          commentData.map(async (c) => {
+            let authorName = '主內肢體';
+            if (c.user_id) {
+              const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', c.user_id).single();
+              if (profile?.full_name) authorName = profile.full_name;
+            }
+            return { ...c, authorName };
+          })
+        );
+        setComments(enrichedComments);
       }
 
-      // 3. 最新進展歷程
-      const { data: updateData } = await supabase
-        .from('prayer_updates')
-        .select('*')
-        .eq('prayer_id', prayer.id)
-        .order('created_at', { ascending: true });
-
-      if (updateData) {
-        setUpdates(updateData);
-      }
-    } catch (err) {
-      console.error('Modal fetch safe error:', err);
-    }
-  };
-
-  useEffect(() => {
-    if (isOpen) {
-      fetchDetailData();
-    }
-  }, [isOpen, prayer.id, currentUserId]);
-
-  // 切換卡片阿們
-  const handleToggleAmen = async () => {
-    if (!currentUserId) return alert('請先登入');
-    try {
-      if (hasAmened) {
-        await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', currentUserId);
-      } else {
-        await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: currentUserId });
-      }
-      fetchDetailData();
+      // 3. 最新進展
+      const { data: updateData } = await supabase.from('prayer_updates').select('*').eq('prayer_id', prayer.id).order('created_at', { ascending: true });
+      if (updateData) setUpdates(updateData);
     } catch (e) {
       console.error(e);
     }
   };
 
-  // 發佈留言
+  useEffect(() => {
+    if (isOpen) fetchDetailData();
+  }, [isOpen, prayer.id, currentUserId]);
+
+  // 按主卡片阿們
+  const handleToggleAmen = async () => {
+    if (!currentUserId) return alert('請先登入');
+    if (hasAmened) {
+      await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', currentUserId);
+    } else {
+      await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: currentUserId });
+    }
+    fetchDetailData();
+    onRefresh();
+  };
+
+  // 發布留言
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !currentUserId) return;
 
     setLoading(true);
-    try {
-      const { error } = await supabase.from('prayer_comments').insert({
-        prayer_id: prayer.id,
-        user_id: currentUserId,
-        content: newComment.trim(),
-        creator_name: '主內肢體',
-      });
+    const { error } = await supabase.from('prayer_comments').insert({
+      prayer_id: prayer.id,
+      user_id: currentUserId,
+      content: newComment.trim(),
+    });
 
-      if (!error) {
-        setNewComment('');
-        fetchDetailData();
-        onRefresh();
-      } else {
-        alert(`發布失敗：${error.message}`);
-      }
-    } catch (e: any) {
-      alert(`發生錯誤：${e.message || e}`);
+    if (!error) {
+      setNewComment('');
+      fetchDetailData();
+      onRefresh();
+    } else {
+      alert(`發布失敗：${error.message}`);
     }
     setLoading(false);
   };
@@ -132,23 +112,19 @@ export default function PrayerDetailModal({
     if (!newUpdateText.trim() || !currentUserId) return;
 
     setLoading(true);
-    try {
-      const { error } = await supabase.from('prayer_updates').insert({
-        prayer_id: prayer.id,
-        user_id: currentUserId,
-        content: newUpdateText.trim(),
-      });
+    const { error } = await supabase.from('prayer_updates').insert({
+      prayer_id: prayer.id,
+      user_id: currentUserId,
+      content: newUpdateText.trim(),
+    });
 
-      if (!error) {
-        setNewUpdateText('');
-        setIsAddingUpdate(false);
-        fetchDetailData();
-        onRefresh();
-      } else {
-        alert(`新增進展失敗：${error.message}`);
-      }
-    } catch (e: any) {
-      alert(`發生錯誤：${e.message || e}`);
+    if (!error) {
+      setNewUpdateText('');
+      setIsAddingUpdate(false);
+      fetchDetailData();
+      onRefresh();
+    } else {
+      alert(`新增進展失敗：${error.message}`);
     }
     setLoading(false);
   };
@@ -157,9 +133,9 @@ export default function PrayerDetailModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
-      <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+      <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden font-sans">
         {/* 頂部 Header */}
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-amber-50/50">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-amber-50/60">
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <span className="font-bold text-gray-800 text-sm">
               {prayer.creator_name || '主內肢體'}
@@ -177,9 +153,9 @@ export default function PrayerDetailModal({
           </button>
         </div>
 
-        {/* 視窗內容主體 */}
+        {/* 視窗內部滾動主體 (LINE 風格對話交誼) */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* 主題與內容 */}
+          {/* 禱告主題與具體內容 */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <h2 className="text-lg md:text-xl font-black text-gray-800">{prayer.title}</h2>
@@ -194,7 +170,7 @@ export default function PrayerDetailModal({
             </p>
           </div>
 
-          {/* 最新進展歷程 */}
+          {/* 最新進展與歷程 */}
           {updates.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-xs font-bold text-amber-800 flex items-center gap-1">
@@ -253,7 +229,7 @@ export default function PrayerDetailModal({
             )
           )}
 
-          {/* 按讚阿們按鈕 */}
+          {/* 同心阿們按鈕 */}
           <div className="flex items-center gap-3 pt-2">
             <button
               type="button"
@@ -269,7 +245,7 @@ export default function PrayerDetailModal({
             </button>
           </div>
 
-          {/* LINE 風格對話留言串 */}
+          {/* LINE 風格留言串 */}
           <div className="space-y-3 pt-4 border-t border-gray-100">
             <h3 className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
               <MessageCircle className="w-4 h-4 text-amber-600" /> 肢體守望留言串 ({comments.length})
@@ -280,16 +256,14 @@ export default function PrayerDetailModal({
             ) : (
               <div className="space-y-2.5 bg-gray-50/80 p-4 rounded-2xl max-h-[300px] overflow-y-auto">
                 {comments.map((c) => (
-                  <div key={c.id} className="flex items-start justify-between gap-3 bg-white p-3 rounded-2xl border border-gray-200/60 text-xs shadow-xs">
-                    <div className="space-y-1">
-                      <div className="font-bold text-gray-800 flex items-center gap-2">
-                        <span>{c.authorName}</span>
-                        <span className="text-[10px] text-gray-400 font-normal">
-                          {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                      <p className="text-gray-600 leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                  <div key={c.id} className="bg-white p-3 rounded-2xl border border-gray-200/60 text-xs space-y-1 shadow-xs">
+                    <div className="font-bold text-gray-800 flex items-center justify-between">
+                      <span>{c.authorName}</span>
+                      <span className="text-[10px] text-gray-400 font-normal">
+                        {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
                     </div>
+                    <p className="text-gray-600 whitespace-pre-wrap leading-relaxed">{c.content}</p>
                   </div>
                 ))}
               </div>
@@ -297,7 +271,7 @@ export default function PrayerDetailModal({
           </div>
         </div>
 
-        {/* 底部輸入框 */}
+        {/* 底部固定輸入留言列 (LINE 風格) */}
         <form onSubmit={handleAddComment} className="p-4 bg-white border-t border-gray-100 flex gap-2">
           <input
             type="text"
