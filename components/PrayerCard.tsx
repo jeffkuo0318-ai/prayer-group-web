@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Heart, MessageCircle, Clock, Globe, Lock } from 'lucide-react';
+import { Heart, MessageCircle, Clock, Globe, Lock, Plus } from 'lucide-react';
 import PrayerDetailModal from './PrayerDetailModal';
 
 interface PrayerCardProps {
@@ -17,6 +17,7 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
   const [hasAmened, setHasAmened] = useState<boolean>(false);
   const [commentCount, setCommentCount] = useState<number>(0);
   const [updateCount, setUpdateCount] = useState<number>(0);
+  const [updates, setUpdates] = useState<any[]>([]);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
   useEffect(() => {
@@ -29,7 +30,7 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
     }
   }, [propCurrentUserId]);
 
-  const fetchSummary = async () => {
+  const fetchData = async () => {
     // 1. 阿們數
     const { data: amens } = await supabase.from('prayer_amens').select('*').eq('prayer_id', prayer.id);
     if (amens) {
@@ -41,18 +42,21 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
     const { count: cCount } = await supabase.from('prayer_comments').select('*', { count: 'exact', head: true }).eq('prayer_id', prayer.id);
     if (cCount !== null) setCommentCount(cCount);
 
-    // 3. 最新進展數
-    const { count: uCount } = await supabase.from('prayer_updates').select('*', { count: 'exact', head: true }).eq('prayer_id', prayer.id);
-    if (uCount !== null) setUpdateCount(uCount);
+    // 3. 最新進展摘要與數量
+    const { data: updateData } = await supabase.from('prayer_updates').select('*').eq('prayer_id', prayer.id).order('created_at', { ascending: true });
+    if (updateData) {
+      setUpdates(updateData);
+      setUpdateCount(updateData.length);
+    }
   };
 
   useEffect(() => {
-    fetchSummary();
+    fetchData();
   }, [prayer.id, currentUserId]);
 
   // 快捷按阿們
   const handleToggleAmen = async (e: React.MouseEvent) => {
-    e.stopPropagation(); // 避免點擊阿們時順便觸發開卡片視窗
+    e.stopPropagation(); // 避免點擊阿們按鈕時觸發開卡片視窗
     let uid = currentUserId;
     if (!uid) {
       const { data: { user } } = await supabase.auth.getUser();
@@ -70,17 +74,17 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
     } else {
       await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: uid });
     }
-    fetchSummary();
+    fetchData();
   };
 
   return (
     <>
-      {/* 點擊卡片開啟 LINE 風格互動交誼詳情視窗 */}
+      {/* 點擊整張代禱卡片即可開啟 LINE 風格交誼詳情視窗 */}
       <div
         onClick={() => setIsDetailOpen(true)}
         className="bg-white border border-gray-200/80 rounded-3xl p-5 shadow-sm space-y-4 font-sans hover:border-amber-400 hover:shadow-md transition cursor-pointer"
       >
-        {/* 頂部資訊 */}
+        {/* 卡片頂部資訊 */}
         <div className="flex items-center justify-between text-xs text-gray-500">
           <div className="flex items-center gap-2">
             <span className="font-bold text-gray-800 text-sm">
@@ -110,7 +114,7 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
           </div>
         </div>
 
-        {/* 標題與內容 */}
+        {/* 禱告標題與具體內容 */}
         <div className="space-y-1.5">
           <h3 className="text-base md:text-lg font-bold text-gray-800 leading-snug">
             {prayer.title}
@@ -120,16 +124,17 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
           </p>
         </div>
 
-        {/* 若有最新進展或留言提示 */}
-        <div className="flex items-center gap-3 text-xs text-amber-800 font-semibold">
-          {updateCount > 0 && (
-            <span className="bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200">
-              📈 有 {updateCount} 則最新進展
-            </span>
-          )}
-        </div>
+        {/* 若有最新進展預覽 */}
+        {updates.length > 0 && (
+          <div className="bg-amber-50/60 border border-amber-200/60 rounded-2xl p-3 text-xs space-y-1">
+            <div className="font-bold text-amber-900 flex items-center gap-1">
+              <Plus className="w-3.5 h-3.5" /> 最新進展摘要 ({updates.length})
+            </div>
+            <p className="text-gray-700 truncate">{updates[updates.length - 1].content}</p>
+          </div>
+        )}
 
-        {/* 底部互動列 */}
+        {/* 卡片底部互動列 */}
         <div className="flex items-center justify-between pt-2 border-t border-gray-100">
           <button
             type="button"
@@ -144,21 +149,21 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
             <span>阿們 ({amenCount})</span>
           </button>
 
-          <div className="flex items-center gap-1 text-xs text-gray-500 font-medium bg-gray-50 px-3 py-1.5 rounded-xl">
-            <MessageCircle className="w-3.5 h-3.5 text-amber-600" />
+          <div className="flex items-center gap-1.5 text-xs text-amber-700 font-bold bg-amber-50 px-3 py-1.5 rounded-xl hover:bg-amber-100 transition">
+            <MessageCircle className="w-4 h-4 text-amber-600" />
             <span>進入互動交誼與留言 ({commentCount})</span>
           </div>
         </div>
       </div>
 
-      {/* 彈出互動視窗 */}
+      {/* 彈出 LINE 群組風格對話交誼視窗 (Modal) */}
       <PrayerDetailModal
         isOpen={isDetailOpen}
         onClose={() => setIsDetailOpen(false)}
         prayer={prayer}
         currentUserId={currentUserId}
         onRefresh={() => {
-          fetchSummary();
+          fetchData();
           if (onRefresh) onRefresh();
         }}
       />
