@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { X, Heart, MessageCircle, Plus, Clock, Globe, Lock, Send } from 'lucide-react';
+import { X, Heart, MessageCircle, Plus, Clock, Send } from 'lucide-react';
 
 interface PrayerDetailModalProps {
   isOpen: boolean;
@@ -32,60 +32,76 @@ export default function PrayerDetailModal({
 
   const fetchDetailData = async () => {
     try {
-      // 1. 主卡片阿們數（防呆）
-      const { data: amens, error: amenErr } = await supabase
+      // 1. 卡片主阿們數
+      const { data: amens } = await supabase
         .from('prayer_amens')
         .select('*')
         .eq('prayer_id', prayer.id);
 
-      if (!amenErr && amens) {
+      if (amens) {
         setAmenCount(amens.length);
         setHasAmened(amens.some((a) => a.user_id === currentUserId));
       }
 
-      // 2. 留言串與留言按讚（防呆）
-      const { data: commentData, error: commentErr } = await supabase
+      // 2. 留言串 (防呆獨立查詢，防止 Join 語法導致崩潰)
+      const { data: commentData } = await supabase
         .from('prayer_comments')
-        .select('*, profiles(full_name)')
+        .select('*')
         .eq('prayer_id', prayer.id)
         .order('created_at', { ascending: true });
 
-      if (!commentErr && commentData) {
-        const commentsWithAmens = await Promise.all(
+      if (commentData) {
+        // 抓取每一位留言者的真實姓名與按讚數
+        const enrichedComments = await Promise.all(
           commentData.map(async (c) => {
+            let authorName = '主內肢體';
+            if (c.user_id) {
+              const { data: p } = await supabase
+                .from('profiles')
+                .select('full_name')
+                .eq('id', c.user_id)
+                .single();
+              if (p?.full_name) authorName = p.full_name;
+            }
+
+            let cAmenCount = 0;
+            let cHasAmened = false;
             try {
-              const { data: cAmens, error: caErr } = await supabase
+              const { data: cAmens } = await supabase
                 .from('comment_amens')
                 .select('*')
                 .eq('comment_id', c.id);
-              if (!caErr && cAmens) {
-                return {
-                  ...c,
-                  amenCount: cAmens.length,
-                  hasAmened: cAmens.some((ca) => ca.user_id === currentUserId),
-                };
+              if (cAmens) {
+                cAmenCount = cAmens.length;
+                cHasAmened = cAmens.some((ca) => ca.user_id === currentUserId);
               }
             } catch (e) {
-              // 防呆：若 comment_amens 表不存在，不阻斷程式
+              // 舊版備用
             }
-            return { ...c, amenCount: 0, hasAmened: false };
+
+            return {
+              ...c,
+              authorName,
+              amenCount: cAmenCount,
+              hasAmened: cHasAmened,
+            };
           })
         );
-        setComments(commentsWithAmens);
+        setComments(enrichedComments);
       }
 
-      // 3. 最新進展歷程（防呆）
-      const { data: updateData, error: updateErr } = await supabase
+      // 3. 最新進展歷程
+      const { data: updateData } = await supabase
         .from('prayer_updates')
         .select('*')
         .eq('prayer_id', prayer.id)
         .order('created_at', { ascending: true });
 
-      if (!updateErr && updateData) {
+      if (updateData) {
         setUpdates(updateData);
       }
     } catch (err) {
-      console.error('Modal 載入防呆捕捉：', err);
+      console.error('Safe fetch error:', err);
     }
   };
 
@@ -104,11 +120,11 @@ export default function PrayerDetailModal({
       }
       fetchDetailData();
     } catch (e) {
-      console.error('Amen error:', e);
+      console.error(e);
     }
   };
 
-  // 切換單則留言愛心（含防呆）
+  // 切換留言愛心
   const handleToggleCommentAmen = async (commentId: string, commentHasAmened: boolean) => {
     if (!currentUserId) return alert('請先登入');
     try {
@@ -119,7 +135,7 @@ export default function PrayerDetailModal({
       }
       fetchDetailData();
     } catch (e) {
-      alert('無法更新留言按讚，請確認資料庫是否已執行建立 comment_amens 指令');
+      alert('請先於 Supabase 執行建立 comment_amens 資料表 SQL');
     }
   };
 
@@ -172,11 +188,11 @@ export default function PrayerDetailModal({
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
       <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
-        {/* 視窗頂部 Header */}
+        {/* 頂部 Header */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-amber-50/50">
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <span className="font-bold text-gray-800 text-sm">
-              {prayer.profiles?.full_name || prayer.creator_name || '主內肢體'}
+              {prayer.creator_name || '主內肢體'}
             </span>
             <span>•</span>
             <span className="flex items-center gap-1">
@@ -191,9 +207,9 @@ export default function PrayerDetailModal({
           </button>
         </div>
 
-        {/* 視窗內部動態對話交誼 */}
+        {/* 視窗內容主體 */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* 禱告主題與具體內容 */}
+          {/* 主題與內容 */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <h2 className="text-lg md:text-xl font-black text-gray-800">{prayer.title}</h2>
@@ -208,7 +224,7 @@ export default function PrayerDetailModal({
             </p>
           </div>
 
-          {/* 最新進展與歷程 */}
+          {/* 最新進展歷程 */}
           {updates.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-xs font-bold text-amber-800 flex items-center gap-1">
@@ -229,7 +245,7 @@ export default function PrayerDetailModal({
             </div>
           )}
 
-          {/* 新增最新進展輸入區 */}
+          {/* 新增最新進展 */}
           {isAddingUpdate ? (
             <form onSubmit={handleAddUpdate} className="bg-gray-50 p-3.5 rounded-2xl border space-y-2">
               <textarea
@@ -267,7 +283,7 @@ export default function PrayerDetailModal({
             )
           )}
 
-          {/* 互動按鈕：主卡片阿們數 */}
+          {/* 按讚阿們按鈕 */}
           <div className="flex items-center gap-3 pt-2">
             <button
               type="button"
@@ -283,7 +299,7 @@ export default function PrayerDetailModal({
             </button>
           </div>
 
-          {/* LINE 風格留言串 */}
+          {/* LINE 風格對話留言串 */}
           <div className="space-y-3 pt-4 border-t border-gray-100">
             <h3 className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
               <MessageCircle className="w-4 h-4 text-amber-600" /> 肢體守望留言串 ({comments.length})
@@ -297,7 +313,7 @@ export default function PrayerDetailModal({
                   <div key={c.id} className="flex items-start justify-between gap-3 bg-white p-3 rounded-2xl border border-gray-200/60 text-xs shadow-xs">
                     <div className="space-y-1">
                       <div className="font-bold text-gray-800 flex items-center gap-2">
-                        <span>{c.profiles?.full_name || '主內肢體'}</span>
+                        <span>{c.authorName}</span>
                         <span className="text-[10px] text-gray-400 font-normal">
                           {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
@@ -305,7 +321,6 @@ export default function PrayerDetailModal({
                       <p className="text-gray-600 leading-relaxed whitespace-pre-wrap">{c.content}</p>
                     </div>
 
-                    {/* 單則留言愛心按鈕 */}
                     <button
                       type="button"
                       onClick={() => handleToggleCommentAmen(c.id, c.hasAmened)}
@@ -326,7 +341,7 @@ export default function PrayerDetailModal({
           </div>
         </div>
 
-        {/* 底部固定輸入留言列 */}
+        {/* 底部輸入框 */}
         <form onSubmit={handleAddComment} className="p-4 bg-white border-t border-gray-100 flex gap-2">
           <input
             type="text"

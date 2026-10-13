@@ -13,10 +13,10 @@ interface PrayerCardProps {
 
 export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, onRefresh }: PrayerCardProps) {
   const [currentUserId, setCurrentUserId] = useState<string>(propCurrentUserId || '');
+  const [authorName, setAuthorName] = useState<string>('主內肢體');
   const [amenCount, setAmenCount] = useState<number>(0);
   const [hasAmened, setHasAmened] = useState<boolean>(false);
   const [commentCount, setCommentCount] = useState<number>(0);
-  const [updateCount, setUpdateCount] = useState<number>(0);
   const [updates, setUpdates] = useState<any[]>([]);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
@@ -31,22 +31,37 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
   }, [propCurrentUserId]);
 
   const fetchData = async () => {
-    // 1. 阿們數
-    const { data: amens } = await supabase.from('prayer_amens').select('*').eq('prayer_id', prayer.id);
-    if (amens) {
-      setAmenCount(amens.length);
-      if (currentUserId) setHasAmened(amens.some((a) => a.user_id === currentUserId));
-    }
+    try {
+      // 1. 發起人姓名防呆查詢
+      if (prayer.user_id) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', prayer.user_id)
+          .single();
+        if (profile?.full_name) setAuthorName(profile.full_name);
+      } else if (prayer.creator_name) {
+        setAuthorName(prayer.creator_name);
+      }
 
-    // 2. 留言數
-    const { count: cCount } = await supabase.from('prayer_comments').select('*', { count: 'exact', head: true }).eq('prayer_id', prayer.id);
-    if (cCount !== null) setCommentCount(cCount);
+      // 2. 阿們數
+      const { data: amens } = await supabase.from('prayer_amens').select('*').eq('prayer_id', prayer.id);
+      if (amens) {
+        setAmenCount(amens.length);
+        if (currentUserId) setHasAmened(amens.some((a) => a.user_id === currentUserId));
+      }
 
-    // 3. 最新進展摘要與數量
-    const { data: updateData } = await supabase.from('prayer_updates').select('*').eq('prayer_id', prayer.id).order('created_at', { ascending: true });
-    if (updateData) {
-      setUpdates(updateData);
-      setUpdateCount(updateData.length);
+      // 3. 留言數
+      const { count: cCount } = await supabase.from('prayer_comments').select('*', { count: 'exact', head: true }).eq('prayer_id', prayer.id);
+      if (cCount !== null) setCommentCount(cCount);
+
+      // 4. 最新進展歷程
+      const { data: updateData } = await supabase.from('prayer_updates').select('*').eq('prayer_id', prayer.id).order('created_at', { ascending: true });
+      if (updateData) {
+        setUpdates(updateData);
+      }
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -56,7 +71,7 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
 
   // 快捷按阿們
   const handleToggleAmen = async (e: React.MouseEvent) => {
-    e.stopPropagation(); // 避免點擊阿們按鈕時觸發開卡片視窗
+    e.stopPropagation();
     let uid = currentUserId;
     if (!uid) {
       const { data: { user } } = await supabase.auth.getUser();
@@ -79,16 +94,16 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
 
   return (
     <>
-      {/* 點擊整張代禱卡片即可開啟 LINE 風格交誼詳情視窗 */}
+      {/* 點擊整張代禱卡片即可開啟 LINE 風格交誼視窗 */}
       <div
         onClick={() => setIsDetailOpen(true)}
         className="bg-white border border-gray-200/80 rounded-3xl p-5 shadow-sm space-y-4 font-sans hover:border-amber-400 hover:shadow-md transition cursor-pointer"
       >
-        {/* 卡片頂部資訊 */}
+        {/* 卡片頂部 */}
         <div className="flex items-center justify-between text-xs text-gray-500">
           <div className="flex items-center gap-2">
             <span className="font-bold text-gray-800 text-sm">
-              {prayer.profiles?.full_name || prayer.creator_name || '主內肢體'}
+              {authorName}
             </span>
             <span className="text-gray-400">•</span>
             <span className="flex items-center gap-1 text-gray-400">
@@ -114,7 +129,7 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
           </div>
         </div>
 
-        {/* 禱告標題與具體內容 */}
+        {/* 標題與內容 */}
         <div className="space-y-1.5">
           <h3 className="text-base md:text-lg font-bold text-gray-800 leading-snug">
             {prayer.title}
@@ -134,7 +149,7 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
           </div>
         )}
 
-        {/* 卡片底部互動列 */}
+        {/* 底部互動列 */}
         <div className="flex items-center justify-between pt-2 border-t border-gray-100">
           <button
             type="button"
@@ -156,7 +171,7 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
         </div>
       </div>
 
-      {/* 彈出 LINE 群組風格對話交誼視窗 (Modal) */}
+      {/* 彈出 LINE 風格交誼視窗 */}
       <PrayerDetailModal
         isOpen={isDetailOpen}
         onClose={() => setIsDetailOpen(false)}
