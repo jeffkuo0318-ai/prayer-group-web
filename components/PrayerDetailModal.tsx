@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { X, Heart, MessageCircle, Plus, Clock, Globe, Lock, Send } from 'lucide-react';
+import { X, Heart, MessageCircle, Plus, Clock, Send } from 'lucide-react';
 
 interface PrayerDetailModalProps {
   isOpen: boolean;
@@ -32,14 +32,20 @@ export default function PrayerDetailModal({
 
   const fetchDetailData = async () => {
     try {
-      // 1. 阿們數
-      const { data: amens } = await supabase.from('prayer_amens').select('*').eq('prayer_id', prayer.id);
+      // 1. 抓取阿們數
+      const { data: amens } = await supabase
+        .from('prayer_amens')
+        .select('*')
+        .eq('prayer_id', prayer.id);
+
       if (amens) {
         setAmenCount(amens.length);
-        if (currentUserId) setHasAmened(amens.some((a) => a.user_id === currentUserId));
+        if (currentUserId) {
+          setHasAmened(amens.some((a) => a.user_id === currentUserId));
+        }
       }
 
-      // 2. 留言串 (自動帶入發言者真實姓名)
+      // 2. 抓取留言並透過 user_id 查詢 profiles 真實姓名
       const { data: commentData } = await supabase
         .from('prayer_comments')
         .select('*')
@@ -51,7 +57,11 @@ export default function PrayerDetailModal({
           commentData.map(async (c) => {
             let authorName = '主內肢體';
             if (c.user_id) {
-              const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', c.user_id).single();
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('full_name')
+                .eq('id', c.user_id)
+                .single();
               if (profile?.full_name) authorName = profile.full_name;
             }
             return { ...c, authorName };
@@ -60,48 +70,71 @@ export default function PrayerDetailModal({
         setComments(enrichedComments);
       }
 
-      // 3. 最新進展
-      const { data: updateData } = await supabase.from('prayer_updates').select('*').eq('prayer_id', prayer.id).order('created_at', { ascending: true });
-      if (updateData) setUpdates(updateData);
+      // 3. 抓取最新進展歷程
+      const { data: updateData } = await supabase
+        .from('prayer_updates')
+        .select('*')
+        .eq('prayer_id', prayer.id)
+        .order('created_at', { ascending: true });
+
+      if (updateData) {
+        setUpdates(updateData);
+      }
+    } catch (e) {
+      console.error('Fetch detail error:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchDetailData();
+    }
+  }, [isOpen, prayer.id, currentUserId]);
+
+  // 切換阿們
+  const handleToggleAmen = async () => {
+    if (!currentUserId) return alert('請先登入');
+    try {
+      if (hasAmened) {
+        await supabase
+          .from('prayer_amens')
+          .delete()
+          .eq('prayer_id', prayer.id)
+          .eq('user_id', currentUserId);
+      } else {
+        await supabase
+          .from('prayer_amens')
+          .insert({ prayer_id: prayer.id, user_id: currentUserId });
+      }
+      fetchDetailData();
+      onRefresh();
     } catch (e) {
       console.error(e);
     }
   };
 
-  useEffect(() => {
-    if (isOpen) fetchDetailData();
-  }, [isOpen, prayer.id, currentUserId]);
-
-  // 按主卡片阿們
-  const handleToggleAmen = async () => {
-    if (!currentUserId) return alert('請先登入');
-    if (hasAmened) {
-      await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', currentUserId);
-    } else {
-      await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: currentUserId });
-    }
-    fetchDetailData();
-    onRefresh();
-  };
-
-  // 發布留言
+  // 發布留言 (LINE 風格)
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !currentUserId) return;
 
     setLoading(true);
-    const { error } = await supabase.from('prayer_comments').insert({
-      prayer_id: prayer.id,
-      user_id: currentUserId,
-      content: newComment.trim(),
-    });
+    try {
+      const { error } = await supabase.from('prayer_comments').insert({
+        prayer_id: prayer.id,
+        user_id: currentUserId,
+        content: newComment.trim(),
+      });
 
-    if (!error) {
-      setNewComment('');
-      fetchDetailData();
-      onRefresh();
-    } else {
-      alert(`發布失敗：${error.message}`);
+      if (!error) {
+        setNewComment('');
+        fetchDetailData();
+        onRefresh();
+      } else {
+        alert(`發布失敗：${error.message}`);
+      }
+    } catch (e: any) {
+      alert(`發生錯誤：${e.message || e}`);
     }
     setLoading(false);
   };
@@ -112,19 +145,23 @@ export default function PrayerDetailModal({
     if (!newUpdateText.trim() || !currentUserId) return;
 
     setLoading(true);
-    const { error } = await supabase.from('prayer_updates').insert({
-      prayer_id: prayer.id,
-      user_id: currentUserId,
-      content: newUpdateText.trim(),
-    });
+    try {
+      const { error } = await supabase.from('prayer_updates').insert({
+        prayer_id: prayer.id,
+        user_id: currentUserId,
+        content: newUpdateText.trim(),
+      });
 
-    if (!error) {
-      setNewUpdateText('');
-      setIsAddingUpdate(false);
-      fetchDetailData();
-      onRefresh();
-    } else {
-      alert(`新增進展失敗：${error.message}`);
+      if (!error) {
+        setNewUpdateText('');
+        setIsAddingUpdate(false);
+        fetchDetailData();
+        onRefresh();
+      } else {
+        alert(`新增進展失敗：${error.message}`);
+      }
+    } catch (e: any) {
+      alert(`發生錯誤：${e.message || e}`);
     }
     setLoading(false);
   };
@@ -134,7 +171,7 @@ export default function PrayerDetailModal({
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
       <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden font-sans">
-        {/* 頂部 Header */}
+        {/* Modal Header */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-amber-50/60">
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <span className="font-bold text-gray-800 text-sm">
@@ -153,9 +190,9 @@ export default function PrayerDetailModal({
           </button>
         </div>
 
-        {/* 視窗內部滾動主體 (LINE 風格對話交誼) */}
+        {/* Modal Scrollable Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* 禱告主題與具體內容 */}
+          {/* Title & Content */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <h2 className="text-lg md:text-xl font-black text-gray-800">{prayer.title}</h2>
@@ -170,7 +207,7 @@ export default function PrayerDetailModal({
             </p>
           </div>
 
-          {/* 最新進展與歷程 */}
+          {/* Updates Timeline */}
           {updates.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-xs font-bold text-amber-800 flex items-center gap-1">
@@ -191,7 +228,7 @@ export default function PrayerDetailModal({
             </div>
           )}
 
-          {/* 新增最新進展 */}
+          {/* Add Update */}
           {isAddingUpdate ? (
             <form onSubmit={handleAddUpdate} className="bg-gray-50 p-3.5 rounded-2xl border space-y-2">
               <textarea
@@ -229,7 +266,7 @@ export default function PrayerDetailModal({
             )
           )}
 
-          {/* 同心阿們按鈕 */}
+          {/* Amen Button */}
           <div className="flex items-center gap-3 pt-2">
             <button
               type="button"
@@ -245,7 +282,7 @@ export default function PrayerDetailModal({
             </button>
           </div>
 
-          {/* LINE 風格留言串 */}
+          {/* LINE-style Comments Feed */}
           <div className="space-y-3 pt-4 border-t border-gray-100">
             <h3 className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
               <MessageCircle className="w-4 h-4 text-amber-600" /> 肢體守望留言串 ({comments.length})
@@ -271,7 +308,7 @@ export default function PrayerDetailModal({
           </div>
         </div>
 
-        {/* 底部固定輸入留言列 (LINE 風格) */}
+        {/* Modal Footer Comment Input */}
         <form onSubmit={handleAddComment} className="p-4 bg-white border-t border-gray-100 flex gap-2">
           <input
             type="text"
