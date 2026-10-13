@@ -29,7 +29,6 @@ export default function PrayerDetailModal({
   const [isAddingUpdate, setIsAddingUpdate] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // 防呆：確保僅在客戶端完全掛載後執行
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -37,7 +36,7 @@ export default function PrayerDetailModal({
   const fetchDetailData = async () => {
     if (!prayer?.id) return;
     try {
-      // 1. 阿們數
+      // 1. 主卡片阿們數
       const { data: amens, error: aErr } = await supabase
         .from('prayer_amens')
         .select('*')
@@ -50,7 +49,7 @@ export default function PrayerDetailModal({
         }
       }
 
-      // 2. 留言串 (安全格式化)
+      // 2. 留言串與個別留言的阿們愛心計算
       const { data: commentData, error: cErr } = await supabase
         .from('prayer_comments')
         .select('*')
@@ -71,7 +70,27 @@ export default function PrayerDetailModal({
                 if (profile?.full_name) authorName = profile.full_name;
               } catch (e) {}
             }
-            return { ...c, authorName };
+
+            // 抓取該則留言的愛心數與當前用戶是否按過讚
+            let cAmenCount = 0;
+            let cHasAmened = false;
+            try {
+              const { data: cAmens } = await supabase
+                .from('comment_amens')
+                .select('*')
+                .eq('comment_id', c.id);
+              if (cAmens) {
+                cAmenCount = cAmens.length;
+                cHasAmened = cAmens.some((ca) => ca.user_id === currentUserId);
+              }
+            } catch (e) {}
+
+            return {
+              ...c,
+              authorName,
+              amenCount: cAmenCount,
+              hasAmened: cHasAmened,
+            };
           })
         );
         setComments(enriched);
@@ -88,7 +107,7 @@ export default function PrayerDetailModal({
         setUpdates(updateData);
       }
     } catch (err) {
-      console.warn('Safe catch fetch error:', err);
+      console.warn('Detail fetch error:', err);
     }
   };
 
@@ -100,7 +119,7 @@ export default function PrayerDetailModal({
 
   if (!mounted || !isOpen || !prayer) return null;
 
-  // 切換阿們
+  // 切換主卡片阿們
   const handleToggleAmen = async () => {
     if (!currentUserId) return alert('請先登入');
     try {
@@ -116,7 +135,28 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 發布留言 (LINE 風格)
+  // 💖 切換單則留言的小愛心阿們
+  const handleToggleCommentAmen = async (commentId: string, commentHasAmened: boolean) => {
+    if (!currentUserId) return alert('請先登入');
+    try {
+      if (commentHasAmened) {
+        await supabase
+          .from('comment_amens')
+          .delete()
+          .eq('comment_id', commentId)
+          .eq('user_id', currentUserId);
+      } else {
+        await supabase
+          .from('comment_amens')
+          .insert({ comment_id: commentId, user_id: currentUserId });
+      }
+      fetchDetailData();
+    } catch (e) {
+      alert('無法更新留言按讚，請確認是否已建立 comment_amens 資料表');
+    }
+  };
+
+  // 發布留言
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !currentUserId) return;
@@ -172,8 +212,8 @@ export default function PrayerDetailModal({
   const isOwner = prayer.user_id === currentUserId || prayer.creator_id === currentUserId;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
-      <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden font-sans">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in font-sans">
+      <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-amber-50/60">
           <div className="flex items-center gap-2 text-xs text-gray-500">
@@ -261,7 +301,6 @@ export default function PrayerDetailModal({
           ) : (
             isOwner && (
               <button
-                type="button"
                 onClick={() => setIsAddingUpdate(true)}
                 className="text-xs text-amber-700 hover:text-amber-800 font-bold bg-amber-100/60 hover:bg-amber-100 px-3 py-2 rounded-xl transition flex items-center gap-1 border border-amber-200/80 cursor-pointer"
               >
@@ -286,7 +325,7 @@ export default function PrayerDetailModal({
             </button>
           </div>
 
-          {/* LINE-style Comments Feed */}
+          {/* LINE-style Comments Feed with per-comment Heart/Amen */}
           <div className="space-y-3 pt-4 border-t border-gray-100">
             <h3 className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
               <MessageCircle className="w-4 h-4 text-amber-600" /> 肢體守望留言串 ({comments.length})
@@ -297,14 +336,31 @@ export default function PrayerDetailModal({
             ) : (
               <div className="space-y-2.5 bg-gray-50/80 p-4 rounded-2xl max-h-[300px] overflow-y-auto">
                 {comments.map((c) => (
-                  <div key={c.id} className="bg-white p-3 rounded-2xl border border-gray-200/60 text-xs space-y-1 shadow-xs">
-                    <div className="font-bold text-gray-800 flex items-center justify-between">
-                      <span>{c.authorName}</span>
-                      <span className="text-[10px] text-gray-400 font-normal">
-                        {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
+                  <div key={c.id} className="bg-white p-3 rounded-2xl border border-gray-200/60 text-xs flex items-start justify-between gap-3 shadow-xs">
+                    <div className="space-y-1 flex-1">
+                      <div className="font-bold text-gray-800 flex items-center justify-between">
+                        <span>{c.authorName}</span>
+                        <span className="text-[10px] text-gray-400 font-normal">
+                          {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <p className="text-gray-600 whitespace-pre-wrap leading-relaxed">{c.content}</p>
                     </div>
-                    <p className="text-gray-600 whitespace-pre-wrap leading-relaxed">{c.content}</p>
+
+                    {/* 每則留言專屬的小愛心阿們按鈕 */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleCommentAmen(c.id, c.hasAmened)}
+                      className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
+                        c.hasAmened
+                          ? 'bg-amber-500 text-white shadow-xs'
+                          : 'bg-gray-100 hover:bg-amber-100 text-gray-600'
+                      }`}
+                      title="認同此留言"
+                    >
+                      <Heart className={`w-3.5 h-3.5 ${c.hasAmened ? 'fill-current' : ''}`} />
+                      <span>{c.amenCount > 0 ? c.amenCount : ''}</span>
+                    </button>
                   </div>
                 ))}
               </div>
