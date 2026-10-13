@@ -2,14 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Heart, MessageCircle, Plus, Clock, Globe, Lock, Flame, Send } from 'lucide-react';
+import { Heart, MessageCircle, Plus, Clock, Globe, Lock, Send } from 'lucide-react';
 
 interface PrayerCardProps {
   prayer: any;
-  currentUserId: string;
+  currentUserId?: string;
 }
 
-export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
+export default function PrayerCard({ prayer, currentUserId: propCurrentUserId }: PrayerCardProps) {
+  const [currentUserId, setCurrentUserId] = useState<string>(propCurrentUserId || '');
   const [amenCount, setAmenCount] = useState<number>(0);
   const [hasAmened, setHasAmened] = useState<boolean>(false);
   const [comments, setComments] = useState<any[]>([]);
@@ -19,36 +20,57 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
   const [isAddingUpdate, setIsAddingUpdate] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // 確保能抓到當前使用者 ID
+  useEffect(() => {
+    if (propCurrentUserId) {
+      setCurrentUserId(propCurrentUserId);
+    } else {
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user) setCurrentUserId(user.id);
+      });
+    }
+  }, [propCurrentUserId]);
+
   // 抓取阿們數、留言與最新進展
   const fetchData = async () => {
-    // 1. 阿們紀錄
-    const { data: amens } = await supabase
-      .from('prayer_amens')
-      .select('*')
-      .eq('prayer_id', prayer.id);
+    try {
+      // 1. 阿們紀錄
+      const { data: amens, error: amenError } = await supabase
+        .from('prayer_amens')
+        .select('*')
+        .eq('prayer_id', prayer.id);
 
-    if (amens) {
-      setAmenCount(amens.length);
-      setHasAmened(amens.some((a) => a.user_id === currentUserId));
+      if (!amenError && amens) {
+        setAmenCount(amens.length);
+        if (currentUserId) {
+          setHasAmened(amens.some((a) => a.user_id === currentUserId));
+        }
+      }
+
+      // 2. 留言紀錄
+      const { data: commentData, error: commentError } = await supabase
+        .from('prayer_comments')
+        .select('*, profiles(full_name)')
+        .eq('prayer_id', prayer.id)
+        .order('created_at', { ascending: true });
+
+      if (!commentError && commentData) {
+        setComments(commentData);
+      }
+
+      // 3. 最新進展/更新歷程
+      const { data: updateData, error: updateError } = await supabase
+        .from('prayer_updates')
+        .select('*')
+        .eq('prayer_id', prayer.id)
+        .order('created_at', { ascending: true });
+
+      if (!updateError && updateData) {
+        setUpdates(updateData);
+      }
+    } catch (err) {
+      console.error('Fetch prayer card data error:', err);
     }
-
-    // 2. 留言紀錄
-    const { data: commentData } = await supabase
-      .from('prayer_comments')
-      .select('*, profiles(full_name)')
-      .eq('prayer_id', prayer.id)
-      .order('created_at', { ascending: true });
-
-    if (commentData) setComments(commentData);
-
-    // 3. 最新進展/更新歷程 (prayer_updates)
-    const { data: updateData } = await supabase
-      .from('prayer_updates')
-      .select('*')
-      .eq('prayer_id', prayer.id)
-      .order('created_at', { ascending: true });
-
-    if (updateData) setUpdates(updateData);
   };
 
   useEffect(() => {
@@ -57,60 +79,115 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
 
   // 切換「阿們」
   const handleToggleAmen = async () => {
-    if (!currentUserId) return alert('請先登入');
-
-    if (hasAmened) {
-      await supabase
-        .from('prayer_amens')
-        .delete()
-        .eq('prayer_id', prayer.id)
-        .eq('user_id', currentUserId);
-    } else {
-      await supabase
-        .from('prayer_amens')
-        .insert({ prayer_id: prayer.id, user_id: currentUserId });
+    let uid = currentUserId;
+    if (!uid) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        uid = user.id;
+        setCurrentUserId(user.id);
+      } else {
+        alert('請先登入才能按阿們');
+        return;
+      }
     }
-    fetchData();
+
+    try {
+      if (hasAmened) {
+        const { error } = await supabase
+          .from('prayer_amens')
+          .delete()
+          .eq('prayer_id', prayer.id)
+          .eq('user_id', uid);
+        if (error) {
+          alert(`取消阿們失敗：${error.message}`);
+          return;
+        }
+      } else {
+        const { error } = await supabase
+          .from('prayer_amens')
+          .insert({ prayer_id: prayer.id, user_id: uid });
+        if (error) {
+          alert(`阿們失敗：${error.message}`);
+          return;
+        }
+      }
+      fetchData();
+    } catch (err: any) {
+      alert(`操作發生錯誤：${err.message || err}`);
+    }
   };
 
-  // 送出新留言
+  // 送出新留言 (「發佈」按鈕)
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newComment.trim() || !currentUserId) return;
+    if (!newComment.trim()) return;
+
+    let uid = currentUserId;
+    if (!uid) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        uid = user.id;
+        setCurrentUserId(user.id);
+      } else {
+        alert('請先登入才能留言');
+        return;
+      }
+    }
 
     setLoading(true);
-    const { error } = await supabase.from('prayer_comments').insert({
-      prayer_id: prayer.id,
-      user_id: currentUserId,
-      content: newComment.trim(),
-    });
+    try {
+      const { error } = await supabase.from('prayer_comments').insert({
+        prayer_id: prayer.id,
+        user_id: uid,
+        content: newComment.trim(),
+      });
 
-    if (!error) {
-      setNewComment('');
-      fetchData();
+      if (error) {
+        alert(`留言發布失敗：${error.message}`);
+      } else {
+        setNewComment('');
+        fetchData();
+      }
+    } catch (err: any) {
+      alert(`留言發生錯誤：${err.message || err}`);
     }
     setLoading(false);
   };
 
-  // ➕ 新增最新進展 (進度歷程)
+  // ➕ 新增最新進展
   const handleAddUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUpdateText.trim() || !currentUserId) return;
+    if (!newUpdateText.trim()) return;
+
+    let uid = currentUserId;
+    if (!uid) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        uid = user.id;
+        setCurrentUserId(user.id);
+      } else {
+        alert('請先登入');
+        return;
+      }
+    }
 
     setLoading(true);
-    const { error } = await supabase.from('prayer_updates').insert({
-      prayer_id: prayer.id,
-      user_id: currentUserId,
-      content: newUpdateText.trim(),
-    });
+    try {
+      const { error } = await supabase.from('prayer_updates').insert({
+        prayer_id: prayer.id,
+        user_id: uid,
+        content: newUpdateText.trim(),
+      });
 
-    if (!error) {
-      setNewUpdateText('');
-      setIsAddingUpdate(false);
-      fetchData();
-    } else {
-      // 若尚未建立 prayer_updates 表格，可作為舊版降級相容
-      alert(`新增進展失敗：${error.message}`);
+      if (error) {
+        alert(`新增進展失敗：${error.message}`);
+      } else {
+        setNewUpdateText('');
+        setIsAddingUpdate(false);
+        fetchData();
+      }
+    } catch (err: any) {
+      alert(`發生錯誤：${err.message || err}`);
     }
     setLoading(false);
   };
@@ -119,7 +196,7 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
 
   return (
     <div className="bg-white border border-gray-200/80 rounded-3xl p-5 shadow-sm space-y-4 font-sans hover:border-amber-300 transition">
-      {/* 1. 卡片頂部資訊 (發起人、時間、狀態標籤) */}
+      {/* 1. 卡片頂部資訊 */}
       <div className="flex items-center justify-between text-xs text-gray-500">
         <div className="flex items-center gap-2">
           <span className="font-bold text-gray-800 text-sm">
@@ -160,7 +237,7 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         </p>
       </div>
 
-      {/* 3. 📈 最新進展歷程區塊 (最新發展增列於此) */}
+      {/* 3. 📈 最新進展歷程區塊 */}
       {updates.length > 0 && (
         <div className="bg-amber-50/60 border border-amber-200/60 rounded-2xl p-3.5 space-y-2 text-xs">
           <div className="font-bold text-amber-900 flex items-center justify-between border-b border-amber-200/50 pb-1.5">
@@ -181,7 +258,7 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
         </div>
       )}
 
-      {/* 4. 新增最新進展按鈕區 (發起人或成員可補充最新發展) */}
+      {/* 4. 新增最新進展按鈕區 */}
       {isAddingUpdate ? (
         <form onSubmit={handleAddUpdate} className="bg-gray-50 p-3 rounded-2xl border space-y-2">
           <textarea
@@ -195,14 +272,14 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
             <button
               type="button"
               onClick={() => setIsAddingUpdate(false)}
-              className="px-3 py-1 rounded-lg text-gray-500 hover:bg-gray-200"
+              className="px-3 py-1 rounded-lg text-gray-500 hover:bg-gray-200 cursor-pointer"
             >
               取消
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg transition"
+              className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg transition cursor-pointer"
             >
               送出最新進展
             </button>
@@ -222,6 +299,7 @@ export default function PrayerCard({ prayer, currentUserId }: PrayerCardProps) {
       {/* 5. 卡片底部互動區 (同心阿們 & 留言) */}
       <div className="flex items-center justify-between pt-2 border-t border-gray-100">
         <button
+          type="button"
           onClick={handleToggleAmen}
           className={`flex items-center gap-1.5 text-xs font-bold px-3.5 py-1.5 rounded-xl transition cursor-pointer ${
             hasAmened
