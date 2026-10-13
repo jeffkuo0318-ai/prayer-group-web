@@ -13,7 +13,6 @@ interface PrayerCardProps {
 
 export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, onRefresh }: PrayerCardProps) {
   const [currentUserId, setCurrentUserId] = useState<string>(propCurrentUserId || '');
-  const [authorName, setAuthorName] = useState<string>('主內肢體');
   const [amenCount, setAmenCount] = useState<number>(0);
   const [hasAmened, setHasAmened] = useState<boolean>(false);
   const [commentCount, setCommentCount] = useState<number>(0);
@@ -32,30 +31,18 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
 
   const fetchData = async () => {
     try {
-      // 1. 發起人姓名防呆查詢
-      if (prayer.user_id) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('full_name')
-          .eq('id', prayer.user_id)
-          .single();
-        if (profile?.full_name) setAuthorName(profile.full_name);
-      } else if (prayer.creator_name) {
-        setAuthorName(prayer.creator_name);
-      }
-
-      // 2. 阿們數
+      // 1. 阿們數
       const { data: amens } = await supabase.from('prayer_amens').select('*').eq('prayer_id', prayer.id);
       if (amens) {
         setAmenCount(amens.length);
         if (currentUserId) setHasAmened(amens.some((a) => a.user_id === currentUserId));
       }
 
-      // 3. 留言數
+      // 2. 留言數
       const { count: cCount } = await supabase.from('prayer_comments').select('*', { count: 'exact', head: true }).eq('prayer_id', prayer.id);
       if (cCount !== null) setCommentCount(cCount);
 
-      // 4. 最新進展歷程
+      // 3. 最新進展歷程
       const { data: updateData } = await supabase.from('prayer_updates').select('*').eq('prayer_id', prayer.id).order('created_at', { ascending: true });
       if (updateData) {
         setUpdates(updateData);
@@ -103,7 +90,7 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
         <div className="flex items-center justify-between text-xs text-gray-500">
           <div className="flex items-center gap-2">
             <span className="font-bold text-gray-800 text-sm">
-              {authorName}
+              {prayer.creator_name || '主內肢體'}
             </span>
             <span className="text-gray-400">•</span>
             <span className="flex items-center gap-1 text-gray-400">

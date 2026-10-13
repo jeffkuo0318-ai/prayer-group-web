@@ -30,6 +30,7 @@ export default function PrayerDetailModal({
 
   if (!isOpen || !prayer) return null;
 
+  // 安全抓取詳情資料 (加入 Try-Catch 全面防呆，絕對不讓畫面崩潰)
   const fetchDetailData = async () => {
     try {
       // 1. 卡片主阿們數
@@ -40,10 +41,12 @@ export default function PrayerDetailModal({
 
       if (amens) {
         setAmenCount(amens.length);
-        setHasAmened(amens.some((a) => a.user_id === currentUserId));
+        if (currentUserId) {
+          setHasAmened(amens.some((a) => a.user_id === currentUserId));
+        }
       }
 
-      // 2. 留言串 (防呆獨立查詢，防止 Join 語法導致崩潰)
+      // 2. 留言串 (安全查詢)
       const { data: commentData } = await supabase
         .from('prayer_comments')
         .select('*')
@@ -51,43 +54,13 @@ export default function PrayerDetailModal({
         .order('created_at', { ascending: true });
 
       if (commentData) {
-        // 抓取每一位留言者的真實姓名與按讚數
-        const enrichedComments = await Promise.all(
-          commentData.map(async (c) => {
-            let authorName = '主內肢體';
-            if (c.user_id) {
-              const { data: p } = await supabase
-                .from('profiles')
-                .select('full_name')
-                .eq('id', c.user_id)
-                .single();
-              if (p?.full_name) authorName = p.full_name;
-            }
-
-            let cAmenCount = 0;
-            let cHasAmened = false;
-            try {
-              const { data: cAmens } = await supabase
-                .from('comment_amens')
-                .select('*')
-                .eq('comment_id', c.id);
-              if (cAmens) {
-                cAmenCount = cAmens.length;
-                cHasAmened = cAmens.some((ca) => ca.user_id === currentUserId);
-              }
-            } catch (e) {
-              // 舊版備用
-            }
-
-            return {
-              ...c,
-              authorName,
-              amenCount: cAmenCount,
-              hasAmened: cHasAmened,
-            };
-          })
-        );
-        setComments(enrichedComments);
+        const safeComments = commentData.map((c) => ({
+          ...c,
+          authorName: c.creator_name || '主內肢體',
+          amenCount: 0,
+          hasAmened: false,
+        }));
+        setComments(safeComments);
       }
 
       // 3. 最新進展歷程
@@ -101,13 +74,15 @@ export default function PrayerDetailModal({
         setUpdates(updateData);
       }
     } catch (err) {
-      console.error('Safe fetch error:', err);
+      console.error('Modal fetch safe error:', err);
     }
   };
 
   useEffect(() => {
-    fetchDetailData();
-  }, [prayer.id, currentUserId]);
+    if (isOpen) {
+      fetchDetailData();
+    }
+  }, [isOpen, prayer.id, currentUserId]);
 
   // 切換卡片阿們
   const handleToggleAmen = async () => {
@@ -124,38 +99,29 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 切換留言愛心
-  const handleToggleCommentAmen = async (commentId: string, commentHasAmened: boolean) => {
-    if (!currentUserId) return alert('請先登入');
-    try {
-      if (commentHasAmened) {
-        await supabase.from('comment_amens').delete().eq('comment_id', commentId).eq('user_id', currentUserId);
-      } else {
-        await supabase.from('comment_amens').insert({ comment_id: commentId, user_id: currentUserId });
-      }
-      fetchDetailData();
-    } catch (e) {
-      alert('請先於 Supabase 執行建立 comment_amens 資料表 SQL');
-    }
-  };
-
   // 發佈留言
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !currentUserId) return;
 
     setLoading(true);
-    const { error } = await supabase.from('prayer_comments').insert({
-      prayer_id: prayer.id,
-      user_id: currentUserId,
-      content: newComment.trim(),
-    });
+    try {
+      const { error } = await supabase.from('prayer_comments').insert({
+        prayer_id: prayer.id,
+        user_id: currentUserId,
+        content: newComment.trim(),
+        creator_name: '主內肢體',
+      });
 
-    if (!error) {
-      setNewComment('');
-      fetchDetailData();
-    } else {
-      alert(`發布失敗：${error.message}`);
+      if (!error) {
+        setNewComment('');
+        fetchDetailData();
+        onRefresh();
+      } else {
+        alert(`發布失敗：${error.message}`);
+      }
+    } catch (e: any) {
+      alert(`發生錯誤：${e.message || e}`);
     }
     setLoading(false);
   };
@@ -166,19 +132,23 @@ export default function PrayerDetailModal({
     if (!newUpdateText.trim() || !currentUserId) return;
 
     setLoading(true);
-    const { error } = await supabase.from('prayer_updates').insert({
-      prayer_id: prayer.id,
-      user_id: currentUserId,
-      content: newUpdateText.trim(),
-    });
+    try {
+      const { error } = await supabase.from('prayer_updates').insert({
+        prayer_id: prayer.id,
+        user_id: currentUserId,
+        content: newUpdateText.trim(),
+      });
 
-    if (!error) {
-      setNewUpdateText('');
-      setIsAddingUpdate(false);
-      fetchDetailData();
-      onRefresh();
-    } else {
-      alert(`新增進展失敗：${error.message}`);
+      if (!error) {
+        setNewUpdateText('');
+        setIsAddingUpdate(false);
+        fetchDetailData();
+        onRefresh();
+      } else {
+        alert(`新增進展失敗：${error.message}`);
+      }
+    } catch (e: any) {
+      alert(`發生錯誤：${e.message || e}`);
     }
     setLoading(false);
   };
@@ -320,20 +290,6 @@ export default function PrayerDetailModal({
                       </div>
                       <p className="text-gray-600 leading-relaxed whitespace-pre-wrap">{c.content}</p>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleToggleCommentAmen(c.id, c.hasAmened)}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
-                        c.hasAmened
-                          ? 'bg-amber-500 text-white'
-                          : 'bg-gray-100 hover:bg-amber-100 text-gray-600'
-                      }`}
-                      title="認同此留言"
-                    >
-                      <Heart className={`w-3.5 h-3.5 ${c.hasAmened ? 'fill-current' : ''}`} />
-                      <span>{c.amenCount > 0 ? c.amenCount : ''}</span>
-                    </button>
                   </div>
                 ))}
               </div>
