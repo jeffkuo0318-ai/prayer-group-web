@@ -31,49 +31,62 @@ export default function PrayerDetailModal({
   if (!isOpen || !prayer) return null;
 
   const fetchDetailData = async () => {
-    // 1. 卡片阿們數
-    const { data: amens } = await supabase
-      .from('prayer_amens')
-      .select('*')
-      .eq('prayer_id', prayer.id);
+    try {
+      // 1. 主卡片阿們數（防呆）
+      const { data: amens, error: amenErr } = await supabase
+        .from('prayer_amens')
+        .select('*')
+        .eq('prayer_id', prayer.id);
 
-    if (amens) {
-      setAmenCount(amens.length);
-      setHasAmened(amens.some((a) => a.user_id === currentUserId));
+      if (!amenErr && amens) {
+        setAmenCount(amens.length);
+        setHasAmened(amens.some((a) => a.user_id === currentUserId));
+      }
+
+      // 2. 留言串與留言按讚（防呆）
+      const { data: commentData, error: commentErr } = await supabase
+        .from('prayer_comments')
+        .select('*, profiles(full_name)')
+        .eq('prayer_id', prayer.id)
+        .order('created_at', { ascending: true });
+
+      if (!commentErr && commentData) {
+        const commentsWithAmens = await Promise.all(
+          commentData.map(async (c) => {
+            try {
+              const { data: cAmens, error: caErr } = await supabase
+                .from('comment_amens')
+                .select('*')
+                .eq('comment_id', c.id);
+              if (!caErr && cAmens) {
+                return {
+                  ...c,
+                  amenCount: cAmens.length,
+                  hasAmened: cAmens.some((ca) => ca.user_id === currentUserId),
+                };
+              }
+            } catch (e) {
+              // 防呆：若 comment_amens 表不存在，不阻斷程式
+            }
+            return { ...c, amenCount: 0, hasAmened: false };
+          })
+        );
+        setComments(commentsWithAmens);
+      }
+
+      // 3. 最新進展歷程（防呆）
+      const { data: updateData, error: updateErr } = await supabase
+        .from('prayer_updates')
+        .select('*')
+        .eq('prayer_id', prayer.id)
+        .order('created_at', { ascending: true });
+
+      if (!updateErr && updateData) {
+        setUpdates(updateData);
+      }
+    } catch (err) {
+      console.error('Modal 載入防呆捕捉：', err);
     }
-
-    // 2. 留言串 (含發言者姓名與留言愛心數)
-    const { data: commentData } = await supabase
-      .from('prayer_comments')
-      .select('*, profiles(full_name)')
-      .eq('prayer_id', prayer.id)
-      .order('created_at', { ascending: true });
-
-    if (commentData) {
-      const commentsWithAmens = await Promise.all(
-        commentData.map(async (c) => {
-          const { data: cAmens } = await supabase
-            .from('comment_amens')
-            .select('*')
-            .eq('comment_id', c.id);
-          return {
-            ...c,
-            amenCount: cAmens ? cAmens.length : 0,
-            hasAmened: cAmens ? cAmens.some((ca) => ca.user_id === currentUserId) : false,
-          };
-        })
-      );
-      setComments(commentsWithAmens);
-    }
-
-    // 3. 最新進展歷程
-    const { data: updateData } = await supabase
-      .from('prayer_updates')
-      .select('*')
-      .eq('prayer_id', prayer.id)
-      .order('created_at', { ascending: true });
-
-    if (updateData) setUpdates(updateData);
   };
 
   useEffect(() => {
@@ -83,23 +96,31 @@ export default function PrayerDetailModal({
   // 切換卡片阿們
   const handleToggleAmen = async () => {
     if (!currentUserId) return alert('請先登入');
-    if (hasAmened) {
-      await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', currentUserId);
-    } else {
-      await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: currentUserId });
+    try {
+      if (hasAmened) {
+        await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: currentUserId });
+      }
+      fetchDetailData();
+    } catch (e) {
+      console.error('Amen error:', e);
     }
-    fetchDetailData();
   };
 
-  // 切換單則留言愛心
+  // 切換單則留言愛心（含防呆）
   const handleToggleCommentAmen = async (commentId: string, commentHasAmened: boolean) => {
     if (!currentUserId) return alert('請先登入');
-    if (commentHasAmened) {
-      await supabase.from('comment_amens').delete().eq('comment_id', commentId).eq('user_id', currentUserId);
-    } else {
-      await supabase.from('comment_amens').insert({ comment_id: commentId, user_id: currentUserId });
+    try {
+      if (commentHasAmened) {
+        await supabase.from('comment_amens').delete().eq('comment_id', commentId).eq('user_id', currentUserId);
+      } else {
+        await supabase.from('comment_amens').insert({ comment_id: commentId, user_id: currentUserId });
+      }
+      fetchDetailData();
+    } catch (e) {
+      alert('無法更新留言按讚，請確認資料庫是否已執行建立 comment_amens 指令');
     }
-    fetchDetailData();
   };
 
   // 發佈留言
@@ -118,7 +139,7 @@ export default function PrayerDetailModal({
       setNewComment('');
       fetchDetailData();
     } else {
-      alert(`留言失敗：${error.message}`);
+      alert(`發布失敗：${error.message}`);
     }
     setLoading(false);
   };
@@ -170,7 +191,7 @@ export default function PrayerDetailModal({
           </button>
         </div>
 
-        {/* 視窗內部滾動主體 (如同 LINE 群組動態對話) */}
+        {/* 視窗內部動態對話交誼 */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {/* 禱告主題與具體內容 */}
           <div className="space-y-2">
@@ -262,7 +283,7 @@ export default function PrayerDetailModal({
             </button>
           </div>
 
-          {/* LINE 風格留言交誼串 */}
+          {/* LINE 風格留言串 */}
           <div className="space-y-3 pt-4 border-t border-gray-100">
             <h3 className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
               <MessageCircle className="w-4 h-4 text-amber-600" /> 肢體守望留言串 ({comments.length})
@@ -305,7 +326,7 @@ export default function PrayerDetailModal({
           </div>
         </div>
 
-        {/* 底部固定輸入留言列 (如同 LINE 對話框) */}
+        {/* 底部固定輸入留言列 */}
         <form onSubmit={handleAddComment} className="p-4 bg-white border-t border-gray-100 flex gap-2">
           <input
             type="text"
