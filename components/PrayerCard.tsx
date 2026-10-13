@@ -12,6 +12,7 @@ interface PrayerCardProps {
 }
 
 export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, onRefresh }: PrayerCardProps) {
+  const [mounted, setMounted] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>(propCurrentUserId || '');
   const [amenCount, setAmenCount] = useState<number>(0);
   const [hasAmened, setHasAmened] = useState<boolean>(false);
@@ -20,6 +21,7 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     if (propCurrentUserId) {
       setCurrentUserId(propCurrentUserId);
     } else {
@@ -30,6 +32,7 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
   }, [propCurrentUserId]);
 
   const fetchData = async () => {
+    if (!prayer?.id) return;
     try {
       // 1. 阿們數
       const { data: amens } = await supabase.from('prayer_amens').select('*').eq('prayer_id', prayer.id);
@@ -46,13 +49,17 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
       const { data: updateData } = await supabase.from('prayer_updates').select('*').eq('prayer_id', prayer.id).order('created_at', { ascending: true });
       if (updateData) setUpdates(updateData);
     } catch (e) {
-      console.error(e);
+      console.warn('Safe fetch prayer card error:', e);
     }
   };
 
   useEffect(() => {
-    fetchData();
-  }, [prayer.id, currentUserId]);
+    if (mounted && prayer?.id) {
+      fetchData();
+    }
+  }, [mounted, prayer?.id, currentUserId]);
+
+  if (!mounted || !prayer) return null;
 
   // 快捷按阿們
   const handleToggleAmen = async (e: React.MouseEvent) => {
@@ -69,12 +76,16 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
       }
     }
 
-    if (hasAmened) {
-      await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', uid);
-    } else {
-      await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: uid });
+    try {
+      if (hasAmened) {
+        await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', uid);
+      } else {
+        await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: uid });
+      }
+      fetchData();
+    } catch (e) {
+      console.error(e);
     }
-    fetchData();
   };
 
   return (
@@ -157,16 +168,18 @@ export default function PrayerCard({ prayer, currentUserId: propCurrentUserId, o
       </div>
 
       {/* 彈出式交誼視窗 (Modal) */}
-      <PrayerDetailModal
-        isOpen={isDetailOpen}
-        onClose={() => setIsDetailOpen(false)}
-        prayer={prayer}
-        currentUserId={currentUserId}
-        onRefresh={() => {
-          fetchData();
-          if (onRefresh) onRefresh();
-        }}
-      />
+      {isDetailOpen && (
+        <PrayerDetailModal
+          isOpen={isDetailOpen}
+          onClose={() => setIsDetailOpen(false)}
+          prayer={prayer}
+          currentUserId={currentUserId}
+          onRefresh={() => {
+            fetchData();
+            if (onRefresh) onRefresh();
+          }}
+        />
+      )}
     </>
   );
 }

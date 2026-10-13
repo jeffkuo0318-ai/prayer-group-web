@@ -19,6 +19,7 @@ export default function PrayerDetailModal({
   currentUserId,
   onRefresh,
 }: PrayerDetailModalProps) {
+  const [mounted, setMounted] = useState(false);
   const [amenCount, setAmenCount] = useState<number>(0);
   const [hasAmened, setHasAmened] = useState<boolean>(false);
   const [comments, setComments] = useState<any[]>([]);
@@ -28,83 +29,85 @@ export default function PrayerDetailModal({
   const [isAddingUpdate, setIsAddingUpdate] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  if (!isOpen || !prayer) return null;
+  // 防呆：確保僅在客戶端完全掛載後執行
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const fetchDetailData = async () => {
+    if (!prayer?.id) return;
     try {
-      // 1. 抓取阿們數
-      const { data: amens } = await supabase
+      // 1. 阿們數
+      const { data: amens, error: aErr } = await supabase
         .from('prayer_amens')
         .select('*')
         .eq('prayer_id', prayer.id);
 
-      if (amens) {
+      if (!aErr && amens) {
         setAmenCount(amens.length);
         if (currentUserId) {
           setHasAmened(amens.some((a) => a.user_id === currentUserId));
         }
       }
 
-      // 2. 抓取留言並透過 user_id 查詢 profiles 真實姓名
-      const { data: commentData } = await supabase
+      // 2. 留言串 (安全格式化)
+      const { data: commentData, error: cErr } = await supabase
         .from('prayer_comments')
         .select('*')
         .eq('prayer_id', prayer.id)
         .order('created_at', { ascending: true });
 
-      if (commentData) {
-        const enrichedComments = await Promise.all(
+      if (!cErr && commentData) {
+        const enriched = await Promise.all(
           commentData.map(async (c) => {
             let authorName = '主內肢體';
             if (c.user_id) {
-              const { data: profile } = await supabase
-                .from('profiles')
-                .select('full_name')
-                .eq('id', c.user_id)
-                .single();
-              if (profile?.full_name) authorName = profile.full_name;
+              try {
+                const { data: profile } = await supabase
+                  .from('profiles')
+                  .select('full_name')
+                  .eq('id', c.user_id)
+                  .single();
+                if (profile?.full_name) authorName = profile.full_name;
+              } catch (e) {}
             }
             return { ...c, authorName };
           })
         );
-        setComments(enrichedComments);
+        setComments(enriched);
       }
 
-      // 3. 抓取最新進展歷程
-      const { data: updateData } = await supabase
+      // 3. 最新進展
+      const { data: updateData, error: uErr } = await supabase
         .from('prayer_updates')
         .select('*')
         .eq('prayer_id', prayer.id)
         .order('created_at', { ascending: true });
 
-      if (updateData) {
+      if (!uErr && updateData) {
         setUpdates(updateData);
       }
-    } catch (e) {
-      console.error('Fetch detail error:', e);
+    } catch (err) {
+      console.warn('Safe catch fetch error:', err);
     }
   };
 
   useEffect(() => {
-    if (isOpen) {
+    if (mounted && isOpen && prayer?.id) {
       fetchDetailData();
     }
-  }, [isOpen, prayer.id, currentUserId]);
+  }, [mounted, isOpen, prayer?.id, currentUserId]);
+
+  if (!mounted || !isOpen || !prayer) return null;
 
   // 切換阿們
   const handleToggleAmen = async () => {
     if (!currentUserId) return alert('請先登入');
     try {
       if (hasAmened) {
-        await supabase
-          .from('prayer_amens')
-          .delete()
-          .eq('prayer_id', prayer.id)
-          .eq('user_id', currentUserId);
+        await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', currentUserId);
       } else {
-        await supabase
-          .from('prayer_amens')
-          .insert({ prayer_id: prayer.id, user_id: currentUserId });
+        await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: currentUserId });
       }
       fetchDetailData();
       onRefresh();
@@ -258,6 +261,7 @@ export default function PrayerDetailModal({
           ) : (
             isOwner && (
               <button
+                type="button"
                 onClick={() => setIsAddingUpdate(true)}
                 className="text-xs text-amber-700 hover:text-amber-800 font-bold bg-amber-100/60 hover:bg-amber-100 px-3 py-2 rounded-xl transition flex items-center gap-1 border border-amber-200/80 cursor-pointer"
               >
