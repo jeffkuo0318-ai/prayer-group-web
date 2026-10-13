@@ -16,10 +16,11 @@ export default function PrayerDetailModal({
   isOpen,
   onClose,
   prayer,
-  currentUserId,
+  currentUserId: propCurrentUserId,
   onRefresh,
 }: PrayerDetailModalProps) {
   const [mounted, setMounted] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string>(propCurrentUserId || '');
   const [amenCount, setAmenCount] = useState<number>(0);
   const [hasAmened, setHasAmened] = useState<boolean>(false);
   const [comments, setComments] = useState<any[]>([]);
@@ -33,30 +34,45 @@ export default function PrayerDetailModal({
     setMounted(true);
   }, []);
 
+  // 確保能獲取到當前使用者 ID
+  const ensureUserId = async (): Promise<string | null> => {
+    if (currentUserId) return currentUserId;
+    if (propCurrentUserId) {
+      setCurrentUserId(propCurrentUserId);
+      return propCurrentUserId;
+    }
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      setCurrentUserId(user.id);
+      return user.id;
+    }
+    return null;
+  };
+
   const fetchDetailData = async () => {
     if (!prayer?.id) return;
+    const uid = await ensureUserId();
+
     try {
-      // 1. 主卡片阿們數
-      const { data: amens, error: aErr } = await supabase
+      // 1. 主代禱卡片阿們數
+      const { data: amens } = await supabase
         .from('prayer_amens')
         .select('*')
         .eq('prayer_id', prayer.id);
 
-      if (!aErr && amens) {
+      if (amens) {
         setAmenCount(amens.length);
-        if (currentUserId) {
-          setHasAmened(amens.some((a) => a.user_id === currentUserId));
-        }
+        if (uid) setHasAmened(amens.some((a) => a.user_id === uid));
       }
 
-      // 2. 留言串與個別留言的阿們愛心計算
-      const { data: commentData, error: cErr } = await supabase
+      // 2. 留言串與每則留言的阿們按讚
+      const { data: commentData } = await supabase
         .from('prayer_comments')
         .select('*')
         .eq('prayer_id', prayer.id)
         .order('created_at', { ascending: true });
 
-      if (!cErr && commentData) {
+      if (commentData) {
         const enriched = await Promise.all(
           commentData.map(async (c) => {
             let authorName = '主內肢體';
@@ -71,7 +87,6 @@ export default function PrayerDetailModal({
               } catch (e) {}
             }
 
-            // 抓取該則留言的愛心數與當前用戶是否按過讚
             let cAmenCount = 0;
             let cHasAmened = false;
             try {
@@ -81,7 +96,7 @@ export default function PrayerDetailModal({
                 .eq('comment_id', c.id);
               if (cAmens) {
                 cAmenCount = cAmens.length;
-                cHasAmened = cAmens.some((ca) => ca.user_id === currentUserId);
+                if (uid) cHasAmened = cAmens.some((ca) => ca.user_id === uid);
               }
             } catch (e) {}
 
@@ -96,18 +111,16 @@ export default function PrayerDetailModal({
         setComments(enriched);
       }
 
-      // 3. 最新進展
-      const { data: updateData, error: uErr } = await supabase
+      // 3. 最新進展歷程
+      const { data: updateData } = await supabase
         .from('prayer_updates')
         .select('*')
         .eq('prayer_id', prayer.id)
         .order('created_at', { ascending: true });
 
-      if (!uErr && updateData) {
-        setUpdates(updateData);
-      }
+      if (updateData) setUpdates(updateData);
     } catch (err) {
-      console.warn('Detail fetch error:', err);
+      console.warn('Fetch detail safe error:', err);
     }
   };
 
@@ -115,18 +128,20 @@ export default function PrayerDetailModal({
     if (mounted && isOpen && prayer?.id) {
       fetchDetailData();
     }
-  }, [mounted, isOpen, prayer?.id, currentUserId]);
+  }, [mounted, isOpen, prayer?.id, propCurrentUserId]);
 
   if (!mounted || !isOpen || !prayer) return null;
 
-  // 切換主卡片阿們
+  // 主卡片阿們切換
   const handleToggleAmen = async () => {
-    if (!currentUserId) return alert('請先登入');
+    const uid = await ensureUserId();
+    if (!uid) return alert('請先登入');
+
     try {
       if (hasAmened) {
-        await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', currentUserId);
+        await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', uid);
       } else {
-        await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: currentUserId });
+        await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: uid });
       }
       fetchDetailData();
       onRefresh();
@@ -135,37 +150,57 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 💖 切換單則留言的小愛心阿們
+  // 💖 留言愛心（阿們）按鈕觸發 (含雙重備援機制)
   const handleToggleCommentAmen = async (commentId: string, commentHasAmened: boolean) => {
-    if (!currentUserId) return alert('請先登入');
+    const uid = await ensureUserId();
+    if (!uid) return alert('請先登入才能認同留言');
+
+    // 樂觀更新 (Optimistic UI Update) 讓使用者立刻看到點擊效果
+    setComments((prevComments) =>
+      prevComments.map((c) => {
+        if (c.id === commentId) {
+          const nextHasAmened = !commentHasAmened;
+          const nextCount = nextHasAmened ? c.amenCount + 1 : Math.max(0, c.amenCount - 1);
+          return { ...c, hasAmened: nextHasAmened, amenCount: nextCount };
+        }
+        return c;
+      })
+    );
+
     try {
       if (commentHasAmened) {
-        await supabase
+        const { error } = await supabase
           .from('comment_amens')
           .delete()
           .eq('comment_id', commentId)
-          .eq('user_id', currentUserId);
+          .eq('user_id', uid);
+        if (error) throw error;
       } else {
-        await supabase
+        const { error } = await supabase
           .from('comment_amens')
-          .insert({ comment_id: commentId, user_id: currentUserId });
+          .insert({ comment_id: commentId, user_id: uid });
+        if (error) throw error;
       }
       fetchDetailData();
-    } catch (e) {
-      alert('無法更新留言按讚，請確認是否已建立 comment_amens 資料表');
+    } catch (e: any) {
+      alert(`認同留言失敗：${e.message || '請確認已於 Supabase 執行 comment_amens 建表 SQL'}`);
+      fetchDetailData(); // 復原狀態
     }
   };
 
-  // 發布留言
+  // 發佈新留言
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newComment.trim() || !currentUserId) return;
+    if (!newComment.trim()) return;
+
+    const uid = await ensureUserId();
+    if (!uid) return alert('請先登入才能發佈留言');
 
     setLoading(true);
     try {
       const { error } = await supabase.from('prayer_comments').insert({
         prayer_id: prayer.id,
-        user_id: currentUserId,
+        user_id: uid,
         content: newComment.trim(),
       });
 
@@ -185,13 +220,16 @@ export default function PrayerDetailModal({
   // 新增最新進展
   const handleAddUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUpdateText.trim() || !currentUserId) return;
+    if (!newUpdateText.trim()) return;
+
+    const uid = await ensureUserId();
+    if (!uid) return alert('請先登入');
 
     setLoading(true);
     try {
       const { error } = await supabase.from('prayer_updates').insert({
         prayer_id: prayer.id,
-        user_id: currentUserId,
+        user_id: uid,
         content: newUpdateText.trim(),
       });
 
@@ -214,7 +252,7 @@ export default function PrayerDetailModal({
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in font-sans">
       <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
-        {/* Modal Header */}
+        {/* Header */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-amber-50/60">
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <span className="font-bold text-gray-800 text-sm">
@@ -233,7 +271,7 @@ export default function PrayerDetailModal({
           </button>
         </div>
 
-        {/* Modal Scrollable Body */}
+        {/* Modal Main Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {/* Title & Content */}
           <div className="space-y-2">
@@ -250,7 +288,7 @@ export default function PrayerDetailModal({
             </p>
           </div>
 
-          {/* Updates Timeline */}
+          {/* Timeline Updates */}
           {updates.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-xs font-bold text-amber-800 flex items-center gap-1">
@@ -271,7 +309,7 @@ export default function PrayerDetailModal({
             </div>
           )}
 
-          {/* Add Update */}
+          {/* Add Update Input */}
           {isAddingUpdate ? (
             <form onSubmit={handleAddUpdate} className="bg-gray-50 p-3.5 rounded-2xl border space-y-2">
               <textarea
@@ -301,6 +339,7 @@ export default function PrayerDetailModal({
           ) : (
             isOwner && (
               <button
+                type="button"
                 onClick={() => setIsAddingUpdate(true)}
                 className="text-xs text-amber-700 hover:text-amber-800 font-bold bg-amber-100/60 hover:bg-amber-100 px-3 py-2 rounded-xl transition flex items-center gap-1 border border-amber-200/80 cursor-pointer"
               >
@@ -309,7 +348,7 @@ export default function PrayerDetailModal({
             )
           )}
 
-          {/* Amen Button */}
+          {/* Main Prayer Amen Button */}
           <div className="flex items-center gap-3 pt-2">
             <button
               type="button"
@@ -325,7 +364,7 @@ export default function PrayerDetailModal({
             </button>
           </div>
 
-          {/* LINE-style Comments Feed with per-comment Heart/Amen */}
+          {/* LINE Group Comments Section */}
           <div className="space-y-3 pt-4 border-t border-gray-100">
             <h3 className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
               <MessageCircle className="w-4 h-4 text-amber-600" /> 肢體守望留言串 ({comments.length})
@@ -336,7 +375,10 @@ export default function PrayerDetailModal({
             ) : (
               <div className="space-y-2.5 bg-gray-50/80 p-4 rounded-2xl max-h-[300px] overflow-y-auto">
                 {comments.map((c) => (
-                  <div key={c.id} className="bg-white p-3 rounded-2xl border border-gray-200/60 text-xs flex items-start justify-between gap-3 shadow-xs">
+                  <div
+                    key={c.id}
+                    className="bg-white p-3 rounded-2xl border border-gray-200/60 text-xs flex items-start justify-between gap-3 shadow-xs hover:border-amber-200 transition"
+                  >
                     <div className="space-y-1 flex-1">
                       <div className="font-bold text-gray-800 flex items-center justify-between">
                         <span>{c.authorName}</span>
@@ -347,18 +389,18 @@ export default function PrayerDetailModal({
                       <p className="text-gray-600 whitespace-pre-wrap leading-relaxed">{c.content}</p>
                     </div>
 
-                    {/* 每則留言專屬的小愛心阿們按鈕 */}
+                    {/* 💖 每則留言專屬的愛心按鈕 */}
                     <button
                       type="button"
                       onClick={() => handleToggleCommentAmen(c.id, c.hasAmened)}
                       className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
                         c.hasAmened
                           ? 'bg-amber-500 text-white shadow-xs'
-                          : 'bg-gray-100 hover:bg-amber-100 text-gray-600'
+                          : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/60'
                       }`}
                       title="認同此留言"
                     >
-                      <Heart className={`w-3.5 h-3.5 ${c.hasAmened ? 'fill-current' : ''}`} />
+                      <Heart className={`w-3.5 h-3.5 ${c.hasAmened ? 'fill-current text-white' : 'text-amber-500'}`} />
                       <span>{c.amenCount > 0 ? c.amenCount : ''}</span>
                     </button>
                   </div>
@@ -368,7 +410,7 @@ export default function PrayerDetailModal({
           </div>
         </div>
 
-        {/* Modal Footer Comment Input */}
+        {/* Footer Send Comment Row */}
         <form onSubmit={handleAddComment} className="p-4 bg-white border-t border-gray-100 flex gap-2">
           <input
             type="text"
