@@ -34,7 +34,6 @@ export default function PrayerDetailModal({
     setMounted(true);
   }, []);
 
-  // 確保能獲取到當前使用者 ID
   const ensureUserId = async (): Promise<string | null> => {
     if (currentUserId) return currentUserId;
     if (propCurrentUserId) {
@@ -65,7 +64,7 @@ export default function PrayerDetailModal({
         if (uid) setHasAmened(amens.some((a) => a.user_id === uid));
       }
 
-      // 2. 留言串與每則留言的阿們按讚
+      // 2. 留言串與留言愛心數
       const { data: commentData } = await supabase
         .from('prayer_comments')
         .select('*')
@@ -93,7 +92,7 @@ export default function PrayerDetailModal({
               const { data: cAmens } = await supabase
                 .from('comment_amens')
                 .select('*')
-                .eq('comment_id', c.id);
+                .eq('comment_id', String(c.id));
               if (cAmens) {
                 cAmenCount = cAmens.length;
                 if (uid) cHasAmened = cAmens.some((ca) => ca.user_id === uid);
@@ -150,15 +149,17 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 💖 留言愛心（阿們）按鈕觸發 (含雙重備援機制)
+  // 💖 留言點擊按讚 (認同阿們)
   const handleToggleCommentAmen = async (commentId: string, commentHasAmened: boolean) => {
     const uid = await ensureUserId();
     if (!uid) return alert('請先登入才能認同留言');
 
-    // 樂觀更新 (Optimistic UI Update) 讓使用者立刻看到點擊效果
+    const strCommentId = String(commentId);
+
+    // 樂觀更新
     setComments((prevComments) =>
       prevComments.map((c) => {
-        if (c.id === commentId) {
+        if (String(c.id) === strCommentId) {
           const nextHasAmened = !commentHasAmened;
           const nextCount = nextHasAmened ? c.amenCount + 1 : Math.max(0, c.amenCount - 1);
           return { ...c, hasAmened: nextHasAmened, amenCount: nextCount };
@@ -169,22 +170,20 @@ export default function PrayerDetailModal({
 
     try {
       if (commentHasAmened) {
-        const { error } = await supabase
+        await supabase
           .from('comment_amens')
           .delete()
-          .eq('comment_id', commentId)
+          .eq('comment_id', strCommentId)
           .eq('user_id', uid);
-        if (error) throw error;
       } else {
-        const { error } = await supabase
+        await supabase
           .from('comment_amens')
-          .insert({ comment_id: commentId, user_id: uid });
-        if (error) throw error;
+          .insert({ comment_id: strCommentId, user_id: uid });
       }
       fetchDetailData();
     } catch (e: any) {
-      alert(`認同留言失敗：${e.message || '請確認已於 Supabase 執行 comment_amens 建表 SQL'}`);
-      fetchDetailData(); // 復原狀態
+      alert(`認同留言失敗：${e.message || '請確認已執行 SQL'}`);
+      fetchDetailData();
     }
   };
 
