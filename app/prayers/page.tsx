@@ -10,6 +10,8 @@ import {
   Plus,
   RotateCcw,
   ShieldCheck,
+  Trash2,
+  ChevronRight,
   ArrowLeft
 } from 'lucide-react';
 import Link from 'next/link';
@@ -82,6 +84,18 @@ export default function PrayersPage() {
 
   useEffect(() => {
     fetchPrayersAndUser();
+
+    // 監聽來自 PrayerDetailModal 的事件：當點擊設為私密時，自動開啟 EditPrivateAccessModal 讓使用者選擇成員
+    const handleOpenAccessModal = (e: any) => {
+      if (e.detail) {
+        setEditingPrayerForAccess(e.detail);
+      }
+    };
+
+    window.addEventListener('open-private-access-modal', handleOpenAccessModal as EventListener);
+    return () => {
+      window.removeEventListener('open-private-access-modal', handleOpenAccessModal as EventListener);
+    };
   }, []);
 
   // 快捷操作：切換狀態 (轉感恩/設緊急/恢復禱告中)
@@ -123,7 +137,7 @@ export default function PrayersPage() {
     }
   };
 
-  // 📊 數據統計計算（純文字、無圖示符號）
+  // 📊 數據統計計算
   const stats = {
     active: prayers.filter((p) => p.status !== 'answered' && p.status !== 'thanksgiving').length,
     urgent: prayers.filter((p) => p.status === 'urgent').length,
@@ -131,7 +145,7 @@ export default function PrayersPage() {
     thanksgiving: prayers.filter((p) => p.status === 'thanksgiving').length,
   };
 
-  // 私密事項清單（保留完整邏輯供系統內部或資料參照使用）
+  // 私密事項清單（完整保留供後台/側邊邏輯參照）
   const privatePrayers = prayers.filter(
     (p) =>
       (p.is_private || p.type === 'private') &&
@@ -142,27 +156,18 @@ export default function PrayersPage() {
   const filteredPrayers = prayers.filter((p) => {
     if (focusedPrayerId) return p.id === focusedPrayerId;
 
-    // 1. 全部代禱：僅列出進行中的禱告（包含公禱、私密、緊急），排除「蒙應允」與「感恩見證」
     if (filter === 'all') {
       return p.status !== 'answered' && p.status !== 'thanksgiving';
     }
-
-    // 2. 迫切緊急：進行中且狀態為緊急
     if (filter === 'urgent') {
       return p.status === 'urgent';
     }
-
-    // 3. 一般公禱：進行中、非私密、且非迫切緊急（不含迫切緊急）
     if (filter === 'public') {
       return (!p.is_private && p.type !== 'private') && p.status !== 'urgent' && p.status !== 'answered' && p.status !== 'thanksgiving';
     }
-
-    // 4. 私密代禱：進行中、私密
     if (filter === 'private') {
       return (p.is_private || p.type === 'private') && p.status !== 'answered' && p.status !== 'thanksgiving';
     }
-
-    // 5. 蒙應允：獨立分頁，但私密事項僅允許「發起人」、「參與成員」與「管理者/小家長」看見
     if (filter === 'answered') {
       if (p.status !== 'answered') return false;
       if (p.is_private || p.type === 'private') {
@@ -172,8 +177,6 @@ export default function PrayersPage() {
       }
       return true;
     }
-
-    // 6. 感恩見證牆：獨立分頁
     if (filter === 'thanksgiving') {
       return p.status === 'thanksgiving';
     }
@@ -185,7 +188,7 @@ export default function PrayersPage() {
     <div className="min-h-screen bg-gray-50/60 pb-20 font-sans">
       {/* 1. 頂部導覽 Bar */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link
               href="/"
@@ -217,8 +220,8 @@ export default function PrayersPage() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-        {/* 2. 📊 全網守望狀態概況 (去除 Emoji 圖示符號，僅留純名稱) */}
+      <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+        {/* 2. 📊 全網守望狀態概況 */}
         <div className="bg-slate-900 text-white p-4 md:p-5 rounded-3xl shadow-sm space-y-3">
           <div className="flex items-center justify-between text-xs text-slate-300 font-semibold">
             <span>全網守望狀態概況</span>
@@ -226,7 +229,6 @@ export default function PrayersPage() {
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {/* 1. 禱告中 */}
             <div
               onClick={() => {
                 setFocusedPrayerId(null);
@@ -240,7 +242,6 @@ export default function PrayersPage() {
               <span className="text-lg md:text-xl font-black text-amber-400">{stats.active}</span>
             </div>
 
-            {/* 2. 迫切緊急 */}
             <div
               onClick={() => {
                 setFocusedPrayerId(null);
@@ -254,7 +255,6 @@ export default function PrayersPage() {
               <span className="text-lg md:text-xl font-black text-red-400">{stats.urgent}</span>
             </div>
 
-            {/* 3. 蒙應允 */}
             <div
               onClick={() => {
                 setFocusedPrayerId(null);
@@ -268,7 +268,6 @@ export default function PrayersPage() {
               <span className="text-lg md:text-xl font-black text-emerald-400">{stats.answered}</span>
             </div>
 
-            {/* 4. 獻上感恩 */}
             <div
               onClick={() => {
                 setFocusedPrayerId(null);
@@ -284,9 +283,8 @@ export default function PrayersPage() {
           </div>
         </div>
 
-        {/* 3. 主區塊：滿版置中禱告牆（已移除右側無用側邊欄，完整保留所有功能與篩選分頁） */}
+        {/* 3. 主區塊：滿版置中禱告牆與分頁過濾 */}
         <div className="space-y-4">
-          {/* 🏷️ 精準分類標籤 Bar (純文字標籤、無符號) */}
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs md:text-sm">
               <button
@@ -375,7 +373,6 @@ export default function PrayersPage() {
             </div>
           </div>
 
-          {/* 若在單一檢視模式下，顯示橙色返回提示 Bar */}
           {focusedPrayerId && (
             <div className="bg-amber-500 text-white px-4 py-2.5 rounded-2xl flex items-center justify-between text-xs md:text-sm font-bold shadow-xs animate-fade-in">
               <span>目前檢視單一事項中（可於下方留言與同心阿們）</span>
@@ -388,7 +385,6 @@ export default function PrayersPage() {
             </div>
           )}
 
-          {/* 卡片列表 */}
           {loading ? (
             <div className="text-center py-12 text-gray-400 text-sm">載入代禱事項中...</div>
           ) : filteredPrayers.length === 0 ? (
@@ -403,6 +399,7 @@ export default function PrayersPage() {
                   key={prayer.id}
                   prayer={prayer}
                   currentUserId={currentUser?.id || ''}
+                  onRefresh={fetchPrayersAndUser}
                 />
               ))}
             </div>

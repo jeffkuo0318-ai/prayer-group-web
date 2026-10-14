@@ -10,7 +10,6 @@ interface PrayerDetailModalProps {
   prayer: any;
   currentUserId: string;
   onRefresh: () => void;
-  onOpenAccessModal?: (prayer: any) => void; // 觸發成員授權視窗
 }
 
 export default function PrayerDetailModal({
@@ -19,12 +18,11 @@ export default function PrayerDetailModal({
   prayer,
   currentUserId: propCurrentUserId,
   onRefresh,
-  onOpenAccessModal,
 }: PrayerDetailModalProps) {
   const [mounted, setMounted] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>(propCurrentUserId || '');
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
-  const [localPrayer, setLocalPrayer] = useState<any>(prayer); // 即時同步狀態
+  const [localPrayer, setLocalPrayer] = useState<any>(prayer);
   const [amenCount, setAmenCount] = useState<number>(0);
   const [hasAmened, setHasAmened] = useState<boolean>(false);
   const [comments, setComments] = useState<any[]>([]);
@@ -38,7 +36,6 @@ export default function PrayerDetailModal({
     setMounted(true);
   }, []);
 
-  // 當外部傳入的 prayer 改變時，同步更新本地狀態
   useEffect(() => {
     setLocalPrayer(prayer);
   }, [prayer]);
@@ -71,7 +68,6 @@ export default function PrayerDetailModal({
     const uid = await ensureUserAndRole();
 
     try {
-      // 1. 主代禱卡片阿們數
       const { data: amens } = await supabase
         .from('prayer_amens')
         .select('*')
@@ -82,7 +78,6 @@ export default function PrayerDetailModal({
         if (uid) setHasAmened(amens.some((a) => a.user_id === uid));
       }
 
-      // 2. 留言串與留言愛心數
       const { data: commentData } = await supabase
         .from('prayer_comments')
         .select('*')
@@ -128,7 +123,6 @@ export default function PrayerDetailModal({
         setComments(enriched);
       }
 
-      // 3. 最新進展歷程
       const { data: updateData } = await supabase
         .from('prayer_updates')
         .select('*')
@@ -153,7 +147,7 @@ export default function PrayerDetailModal({
   const isOwner = localPrayer.user_id === uid || localPrayer.creator_id === uid;
   const canManage = isOwner || isAdmin || true;
 
-  // 1️⃣ 轉獻上感恩（即時更新畫面，不需重新整理）
+  // 1️⃣ 轉獻上感恩
   const handleMoveToThanksgiving = async () => {
     if (!confirm('確定將此代禱轉為感恩見證嗎？')) return;
     try {
@@ -174,7 +168,7 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 2️⃣ 切換迫切緊急狀態（即時更新畫面）
+  // 2️⃣ 切換迫切緊急狀態
   const handleToggleUrgent = async () => {
     const nextStatus = localPrayer.status === 'urgent' ? 'active' : 'urgent';
     try {
@@ -194,16 +188,16 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 3️⃣ 切換權限 (公禱 ⇄ 私密代禱：若轉私密則彈出成員選取視窗)
+  // 3️⃣ 切換權限 (公禱 ⇄ 私密代禱：轉私密時透過全域事件觸發成員選取視窗)
   const handleTogglePrivacy = async () => {
     const nextPrivate = !localPrayer.is_private;
 
     if (nextPrivate) {
-      // 若要轉為私密代禱，關閉此視窗並開啟專屬的成員授權選取視窗
+      // 關閉目前詳情視窗，並發送事件開啟「EditPrivateAccessModal」授權視窗
       onClose();
-      if (onOpenAccessModal) {
-        onOpenAccessModal(localPrayer);
-      }
+      window.dispatchEvent(
+        new CustomEvent('open-private-access-modal', { detail: localPrayer })
+      );
       return;
     }
 
@@ -247,7 +241,6 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 主卡片阿們切換
   const handleToggleAmen = async () => {
     if (!uid) return alert('請先登入');
     try {
@@ -263,7 +256,6 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 💖 留言點擊按讚 (認同阿們)
   const handleToggleCommentAmen = async (commentId: string, commentHasAmened: boolean) => {
     if (!uid) return alert('請先登入才能認同留言');
 
@@ -292,7 +284,6 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 發佈新留言
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !uid) return;
@@ -318,7 +309,6 @@ export default function PrayerDetailModal({
     setLoading(false);
   };
 
-  // 新增最新進展
   const handleAddUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUpdateText.trim() || !uid) return;
@@ -411,7 +401,6 @@ export default function PrayerDetailModal({
 
         {/* Modal Main Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Title & Content */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <h2 className="text-lg md:text-xl font-black text-gray-800">{localPrayer.title}</h2>
@@ -426,7 +415,6 @@ export default function PrayerDetailModal({
             </p>
           </div>
 
-          {/* Timeline Updates */}
           {updates.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-xs font-bold text-amber-800 flex items-center gap-1">
@@ -447,7 +435,6 @@ export default function PrayerDetailModal({
             </div>
           )}
 
-          {/* Add Update Input */}
           {isAddingUpdate ? (
             <form onSubmit={handleAddUpdate} className="bg-gray-50 p-3.5 rounded-2xl border space-y-2">
               <textarea
@@ -484,7 +471,6 @@ export default function PrayerDetailModal({
             </button>
           )}
 
-          {/* Main Prayer Amen Button */}
           <div className="flex items-center gap-3 pt-2">
             <button
               type="button"
@@ -500,7 +486,6 @@ export default function PrayerDetailModal({
             </button>
           </div>
 
-          {/* LINE Group Comments Section */}
           <div className="space-y-3 pt-4 border-t border-gray-100">
             <h3 className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
               <MessageCircle className="w-4 h-4 text-amber-600" /> 肢體守望留言串 ({comments.length})
@@ -525,7 +510,6 @@ export default function PrayerDetailModal({
                       <p className="text-gray-600 whitespace-pre-wrap leading-relaxed">{c.content}</p>
                     </div>
 
-                    {/* 每則留言專屬愛心按鈕 */}
                     <button
                       type="button"
                       onClick={() => handleToggleCommentAmen(c.id, c.hasAmened)}
@@ -546,7 +530,6 @@ export default function PrayerDetailModal({
           </div>
         </div>
 
-        {/* Footer Send Comment Row */}
         <form onSubmit={handleAddComment} className="p-4 bg-white border-t border-gray-100 flex gap-2">
           <input
             type="text"
