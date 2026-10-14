@@ -37,7 +37,9 @@ export default function PrayerDetailModal({
   }, []);
 
   useEffect(() => {
-    setLocalPrayer(prayer);
+    if (prayer) {
+      setLocalPrayer(prayer);
+    }
   }, [prayer]);
 
   const ensureUserAndRole = async (): Promise<string | null> => {
@@ -64,14 +66,15 @@ export default function PrayerDetailModal({
   };
 
   const fetchDetailData = async () => {
-    if (!localPrayer?.id) return;
+    const targetPrayerId = localPrayer?.id || prayer?.id;
+    if (!targetPrayerId) return;
     const uid = await ensureUserAndRole();
 
     try {
       const { data: amens } = await supabase
         .from('prayer_amens')
         .select('*')
-        .eq('prayer_id', localPrayer.id);
+        .eq('prayer_id', targetPrayerId);
 
       if (amens) {
         setAmenCount(amens.length);
@@ -81,7 +84,7 @@ export default function PrayerDetailModal({
       const { data: commentData } = await supabase
         .from('prayer_comments')
         .select('*')
-        .eq('prayer_id', localPrayer.id)
+        .eq('prayer_id', targetPrayerId)
         .order('created_at', { ascending: true });
 
       if (commentData) {
@@ -126,7 +129,7 @@ export default function PrayerDetailModal({
       const { data: updateData } = await supabase
         .from('prayer_updates')
         .select('*')
-        .eq('prayer_id', localPrayer.id)
+        .eq('prayer_id', targetPrayerId)
         .order('created_at', { ascending: true });
 
       if (updateData) setUpdates(updateData);
@@ -136,15 +139,16 @@ export default function PrayerDetailModal({
   };
 
   useEffect(() => {
-    if (mounted && isOpen && localPrayer?.id) {
+    if (mounted && isOpen && (localPrayer?.id || prayer?.id)) {
       fetchDetailData();
     }
-  }, [mounted, isOpen, localPrayer?.id, propCurrentUserId]);
+  }, [mounted, isOpen, localPrayer?.id, prayer?.id, propCurrentUserId]);
 
-  if (!mounted || !isOpen || !localPrayer) return null;
+  if (!mounted || !isOpen || (!localPrayer && !prayer)) return null;
 
+  const currentPrayer = localPrayer || prayer;
   const uid = currentUserId || propCurrentUserId;
-  const isOwner = localPrayer.user_id === uid || localPrayer.creator_id === uid;
+  const isOwner = currentPrayer.user_id === uid || currentPrayer.creator_id === uid;
   const canManage = isOwner || isAdmin || true;
 
   // 1️⃣ 轉獻上感恩
@@ -154,7 +158,7 @@ export default function PrayerDetailModal({
       const { error } = await supabase
         .from('prayers')
         .update({ status: 'thanksgiving' })
-        .eq('id', localPrayer.id);
+        .eq('id', currentPrayer.id);
 
       if (!error) {
         setLocalPrayer((prev: any) => ({ ...prev, status: 'thanksgiving' }));
@@ -170,12 +174,12 @@ export default function PrayerDetailModal({
 
   // 2️⃣ 切換迫切緊急狀態
   const handleToggleUrgent = async () => {
-    const nextStatus = localPrayer.status === 'urgent' ? 'active' : 'urgent';
+    const nextStatus = currentPrayer.status === 'urgent' ? 'active' : 'urgent';
     try {
       const { error } = await supabase
         .from('prayers')
         .update({ status: nextStatus })
-        .eq('id', localPrayer.id);
+        .eq('id', currentPrayer.id);
 
       if (!error) {
         setLocalPrayer((prev: any) => ({ ...prev, status: nextStatus }));
@@ -188,14 +192,14 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 3️⃣ 切換權限 (轉私密時透過全域事件觸發成員選取視窗)
+  // 3️⃣ 切換權限
   const handleTogglePrivacy = async () => {
-    const nextPrivate = !localPrayer.is_private;
+    const nextPrivate = !currentPrayer.is_private;
 
     if (nextPrivate) {
       onClose();
       window.dispatchEvent(
-        new CustomEvent('open-private-access-modal', { detail: localPrayer })
+        new CustomEvent('open-private-access-modal', { detail: currentPrayer })
       );
       return;
     }
@@ -204,7 +208,7 @@ export default function PrayerDetailModal({
       const { error } = await supabase
         .from('prayers')
         .update({ is_private: false, type: 'public' })
-        .eq('id', localPrayer.id);
+        .eq('id', currentPrayer.id);
 
       if (!error) {
         setLocalPrayer((prev: any) => ({ ...prev, is_private: false, type: 'public' }));
@@ -225,7 +229,7 @@ export default function PrayerDetailModal({
       const { error } = await supabase
         .from('prayers')
         .delete()
-        .eq('id', localPrayer.id);
+        .eq('id', currentPrayer.id);
 
       if (!error) {
         onClose();
@@ -243,9 +247,9 @@ export default function PrayerDetailModal({
     if (!uid) return alert('請先登入');
     try {
       if (hasAmened) {
-        await supabase.from('prayer_amens').delete().eq('prayer_id', localPrayer.id).eq('user_id', uid);
+        await supabase.from('prayer_amens').delete().eq('prayer_id', currentPrayer.id).eq('user_id', uid);
       } else {
-        await supabase.from('prayer_amens').insert({ prayer_id: localPrayer.id, user_id: uid });
+        await supabase.from('prayer_amens').insert({ prayer_id: currentPrayer.id, user_id: uid });
       }
       fetchDetailData();
       onRefresh();
@@ -282,10 +286,14 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 💬 發佈新留言：發布後留在視窗內，清空輸入框並即時更新留言列表
+  // 💬 發布新留言（嚴格檢驗 ID，發布後留在視窗內持續對話）
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newComment.trim() || !uid) return;
+    const targetId = currentPrayer?.id;
+    if (!targetId || !newComment.trim() || !uid) {
+      alert('錯誤：無法取得代禱編號或未輸入留言內容');
+      return;
+    }
 
     const commentText = newComment.trim();
     setNewComment('');
@@ -293,7 +301,7 @@ export default function PrayerDetailModal({
 
     try {
       const { error } = await supabase.from('prayer_comments').insert({
-        prayer_id: localPrayer.id,
+        prayer_id: targetId,
         user_id: uid,
         content: commentText,
       });
@@ -303,7 +311,7 @@ export default function PrayerDetailModal({
         onRefresh();
       } else {
         alert(`發布失敗：${error.message}`);
-        setNewComment(commentText); // 失敗時恢復輸入文字
+        setNewComment(commentText);
       }
     } catch (e: any) {
       alert(`發生錯誤：${e.message || e}`);
@@ -314,12 +322,13 @@ export default function PrayerDetailModal({
 
   const handleAddUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUpdateText.trim() || !uid) return;
+    const targetId = currentPrayer?.id;
+    if (!targetId || !newUpdateText.trim() || !uid) return;
 
     setLoading(true);
     try {
       const { error } = await supabase.from('prayer_updates').insert({
-        prayer_id: localPrayer.id,
+        prayer_id: targetId,
         user_id: uid,
         content: newUpdateText.trim(),
       });
@@ -345,11 +354,11 @@ export default function PrayerDetailModal({
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-amber-50/60">
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <span className="font-bold text-gray-800 text-sm">
-              {localPrayer.creator_name || '主內肢體'}
+              {currentPrayer.creator_name || '主內肢體'}
             </span>
             <span>•</span>
             <span className="flex items-center gap-1">
-              <Clock className="w-3 h-3" /> {new Date(localPrayer.created_at).toLocaleDateString()}
+              <Clock className="w-3 h-3" /> {new Date(currentPrayer.created_at).toLocaleDateString()}
             </span>
           </div>
           <button
@@ -376,20 +385,20 @@ export default function PrayerDetailModal({
                 type="button"
                 onClick={handleToggleUrgent}
                 className={`font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border shadow-xs ${
-                  localPrayer.status === 'urgent'
+                  currentPrayer.status === 'urgent'
                     ? 'bg-amber-100 text-amber-800 border-amber-300'
                     : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200'
                 }`}
               >
-                <AlertCircle className="w-3 h-3" /> {localPrayer.status === 'urgent' ? '解除緊急' : '設為緊急'}
+                <AlertCircle className="w-3 h-3" /> {currentPrayer.status === 'urgent' ? '解除緊急' : '設為緊急'}
               </button>
               <button
                 type="button"
                 onClick={handleTogglePrivacy}
                 className="bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border border-purple-200 shadow-xs"
               >
-                {localPrayer.is_private ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
-                {localPrayer.is_private ? '轉為公禱' : '設為私密'}
+                {currentPrayer.is_private ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                {currentPrayer.is_private ? '轉為公禱' : '設為私密'}
               </button>
               <button
                 type="button"
@@ -406,15 +415,15 @@ export default function PrayerDetailModal({
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <h2 className="text-lg md:text-xl font-black text-gray-800">{localPrayer.title}</h2>
-              {localPrayer.status === 'urgent' && (
+              <h2 className="text-lg md:text-xl font-black text-gray-800">{currentPrayer.title}</h2>
+              {currentPrayer.status === 'urgent' && (
                 <span className="bg-red-100 text-red-700 font-bold px-2.5 py-0.5 rounded-full text-[11px]">
                   迫切緊急
                 </span>
               )}
             </div>
             <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap bg-gray-50 p-4 rounded-2xl border border-gray-100">
-              {localPrayer.content}
+              {currentPrayer.content}
             </p>
           </div>
 
@@ -533,7 +542,7 @@ export default function PrayerDetailModal({
           </div>
         </div>
 
-        {/* 底部留言輸入列：發布後留在視窗內供持續回覆 */}
+        {/* 底部留言輸入列 */}
         <form onSubmit={handleAddComment} className="p-4 bg-white border-t border-gray-100 flex gap-2">
           <input
             type="text"
