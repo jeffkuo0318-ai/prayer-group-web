@@ -10,6 +10,7 @@ interface PrayerDetailModalProps {
   prayer: any;
   currentUserId: string;
   onRefresh: () => void;
+  onOpenAccessModal?: (prayer: any) => void; // 觸發成員授權視窗
 }
 
 export default function PrayerDetailModal({
@@ -18,10 +19,12 @@ export default function PrayerDetailModal({
   prayer,
   currentUserId: propCurrentUserId,
   onRefresh,
+  onOpenAccessModal,
 }: PrayerDetailModalProps) {
   const [mounted, setMounted] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>(propCurrentUserId || '');
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [localPrayer, setLocalPrayer] = useState<any>(prayer); // 即時同步狀態
   const [amenCount, setAmenCount] = useState<number>(0);
   const [hasAmened, setHasAmened] = useState<boolean>(false);
   const [comments, setComments] = useState<any[]>([]);
@@ -34,6 +37,11 @@ export default function PrayerDetailModal({
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // 當外部傳入的 prayer 改變時，同步更新本地狀態
+  useEffect(() => {
+    setLocalPrayer(prayer);
+  }, [prayer]);
 
   const ensureUserAndRole = async (): Promise<string | null> => {
     let uid = currentUserId || propCurrentUserId;
@@ -59,7 +67,7 @@ export default function PrayerDetailModal({
   };
 
   const fetchDetailData = async () => {
-    if (!prayer?.id) return;
+    if (!localPrayer?.id) return;
     const uid = await ensureUserAndRole();
 
     try {
@@ -67,7 +75,7 @@ export default function PrayerDetailModal({
       const { data: amens } = await supabase
         .from('prayer_amens')
         .select('*')
-        .eq('prayer_id', prayer.id);
+        .eq('prayer_id', localPrayer.id);
 
       if (amens) {
         setAmenCount(amens.length);
@@ -78,7 +86,7 @@ export default function PrayerDetailModal({
       const { data: commentData } = await supabase
         .from('prayer_comments')
         .select('*')
-        .eq('prayer_id', prayer.id)
+        .eq('prayer_id', localPrayer.id)
         .order('created_at', { ascending: true });
 
       if (commentData) {
@@ -124,7 +132,7 @@ export default function PrayerDetailModal({
       const { data: updateData } = await supabase
         .from('prayer_updates')
         .select('*')
-        .eq('prayer_id', prayer.id)
+        .eq('prayer_id', localPrayer.id)
         .order('created_at', { ascending: true });
 
       if (updateData) setUpdates(updateData);
@@ -134,30 +142,30 @@ export default function PrayerDetailModal({
   };
 
   useEffect(() => {
-    if (mounted && isOpen && prayer?.id) {
+    if (mounted && isOpen && localPrayer?.id) {
       fetchDetailData();
     }
-  }, [mounted, isOpen, prayer?.id, propCurrentUserId]);
+  }, [mounted, isOpen, localPrayer?.id, propCurrentUserId]);
 
-  if (!mounted || !isOpen || !prayer) return null;
+  if (!mounted || !isOpen || !localPrayer) return null;
 
   const uid = currentUserId || propCurrentUserId;
-  const isOwner = prayer.user_id === uid || prayer.creator_id === uid;
-  const canManage = isOwner || isAdmin || true; // 確保只要有登入且開啟 Modal 即可操作管理
+  const isOwner = localPrayer.user_id === uid || localPrayer.creator_id === uid;
+  const canManage = isOwner || isAdmin || true;
 
-  // 1️⃣ 轉獻上感恩
+  // 1️⃣ 轉獻上感恩（即時更新畫面，不需重新整理）
   const handleMoveToThanksgiving = async () => {
     if (!confirm('確定將此代禱轉為感恩見證嗎？')) return;
     try {
       const { error } = await supabase
         .from('prayers')
         .update({ status: 'thanksgiving' })
-        .eq('id', prayer.id);
+        .eq('id', localPrayer.id);
 
       if (!error) {
-        alert('已成功移至感恩見證牆！');
-        onClose();
+        setLocalPrayer((prev: any) => ({ ...prev, status: 'thanksgiving' }));
         onRefresh();
+        alert('已成功移至感恩見證牆！');
       } else {
         alert(`轉感恩失敗：${error.message}`);
       }
@@ -166,17 +174,17 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 2️⃣ 切換迫切緊急狀態
+  // 2️⃣ 切換迫切緊急狀態（即時更新畫面）
   const handleToggleUrgent = async () => {
-    const nextStatus = prayer.status === 'urgent' ? 'active' : 'urgent';
+    const nextStatus = localPrayer.status === 'urgent' ? 'active' : 'urgent';
     try {
       const { error } = await supabase
         .from('prayers')
         .update({ status: nextStatus })
-        .eq('id', prayer.id);
+        .eq('id', localPrayer.id);
 
       if (!error) {
-        alert(nextStatus === 'urgent' ? '已設為迫切緊急狀態！' : '已解除緊急狀態！');
+        setLocalPrayer((prev: any) => ({ ...prev, status: nextStatus }));
         onRefresh();
       } else {
         alert(`狀態切換失敗：${error.message}`);
@@ -186,18 +194,30 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 3️⃣ 切換權限 (公禱 / 私密代禱)
+  // 3️⃣ 切換權限 (公禱 ⇄ 私密代禱：若轉私密則彈出成員選取視窗)
   const handleTogglePrivacy = async () => {
-    const nextPrivate = !prayer.is_private;
+    const nextPrivate = !localPrayer.is_private;
+
+    if (nextPrivate) {
+      // 若要轉為私密代禱，關閉此視窗並開啟專屬的成員授權選取視窗
+      onClose();
+      if (onOpenAccessModal) {
+        onOpenAccessModal(localPrayer);
+      }
+      return;
+    }
+
+    // 若從私密轉為公禱
     try {
       const { error } = await supabase
         .from('prayers')
-        .update({ is_private: nextPrivate, type: nextPrivate ? 'private' : 'public' })
-        .eq('id', prayer.id);
+        .update({ is_private: false, type: 'public' })
+        .eq('id', localPrayer.id);
 
       if (!error) {
-        alert(nextPrivate ? '已設為私密代禱！' : '已轉為一般公禱！');
+        setLocalPrayer((prev: any) => ({ ...prev, is_private: false, type: 'public' }));
         onRefresh();
+        alert('已成功轉為一般公禱！');
       } else {
         alert(`權限切換失敗：${error.message}`);
       }
@@ -213,12 +233,12 @@ export default function PrayerDetailModal({
       const { error } = await supabase
         .from('prayers')
         .delete()
-        .eq('id', prayer.id);
+        .eq('id', localPrayer.id);
 
       if (!error) {
-        alert('已成功刪除代禱事項');
         onClose();
         onRefresh();
+        alert('已成功刪除代禱事項');
       } else {
         alert(`刪除失敗：${error.message}`);
       }
@@ -232,9 +252,9 @@ export default function PrayerDetailModal({
     if (!uid) return alert('請先登入');
     try {
       if (hasAmened) {
-        await supabase.from('prayer_amens').delete().eq('prayer_id', prayer.id).eq('user_id', uid);
+        await supabase.from('prayer_amens').delete().eq('prayer_id', localPrayer.id).eq('user_id', uid);
       } else {
-        await supabase.from('prayer_amens').insert({ prayer_id: prayer.id, user_id: uid });
+        await supabase.from('prayer_amens').insert({ prayer_id: localPrayer.id, user_id: uid });
       }
       fetchDetailData();
       onRefresh();
@@ -280,7 +300,7 @@ export default function PrayerDetailModal({
     setLoading(true);
     try {
       const { error } = await supabase.from('prayer_comments').insert({
-        prayer_id: prayer.id,
+        prayer_id: localPrayer.id,
         user_id: uid,
         content: newComment.trim(),
       });
@@ -306,7 +326,7 @@ export default function PrayerDetailModal({
     setLoading(true);
     try {
       const { error } = await supabase.from('prayer_updates').insert({
-        prayer_id: prayer.id,
+        prayer_id: localPrayer.id,
         user_id: uid,
         content: newUpdateText.trim(),
       });
@@ -332,11 +352,11 @@ export default function PrayerDetailModal({
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-amber-50/60">
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <span className="font-bold text-gray-800 text-sm">
-              {prayer.creator_name || '主內肢體'}
+              {localPrayer.creator_name || '主內肢體'}
             </span>
             <span>•</span>
             <span className="flex items-center gap-1">
-              <Clock className="w-3 h-3" /> {new Date(prayer.created_at).toLocaleDateString()}
+              <Clock className="w-3 h-3" /> {new Date(localPrayer.created_at).toLocaleDateString()}
             </span>
           </div>
           <button
@@ -363,20 +383,20 @@ export default function PrayerDetailModal({
                 type="button"
                 onClick={handleToggleUrgent}
                 className={`font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border shadow-xs ${
-                  prayer.status === 'urgent'
+                  localPrayer.status === 'urgent'
                     ? 'bg-amber-100 text-amber-800 border-amber-300'
                     : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200'
                 }`}
               >
-                <AlertCircle className="w-3 h-3" /> {prayer.status === 'urgent' ? '解除緊急' : '設為緊急'}
+                <AlertCircle className="w-3 h-3" /> {localPrayer.status === 'urgent' ? '解除緊急' : '設為緊急'}
               </button>
               <button
                 type="button"
                 onClick={handleTogglePrivacy}
                 className="bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border border-purple-200 shadow-xs"
               >
-                {prayer.is_private ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
-                {prayer.is_private ? '轉為公禱' : '設為私密'}
+                {localPrayer.is_private ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                {localPrayer.is_private ? '轉為公禱' : '設為私密'}
               </button>
               <button
                 type="button"
@@ -394,15 +414,15 @@ export default function PrayerDetailModal({
           {/* Title & Content */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <h2 className="text-lg md:text-xl font-black text-gray-800">{prayer.title}</h2>
-              {prayer.status === 'urgent' && (
+              <h2 className="text-lg md:text-xl font-black text-gray-800">{localPrayer.title}</h2>
+              {localPrayer.status === 'urgent' && (
                 <span className="bg-red-100 text-red-700 font-bold px-2.5 py-0.5 rounded-full text-[11px]">
                   迫切緊急
                 </span>
               )}
             </div>
             <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap bg-gray-50 p-4 rounded-2xl border border-gray-100">
-              {prayer.content}
+              {localPrayer.content}
             </p>
           </div>
 
