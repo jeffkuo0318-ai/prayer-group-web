@@ -188,12 +188,11 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 3️⃣ 切換權限 (公禱 ⇄ 私密代禱：轉私密時透過全域事件觸發成員選取視窗)
+  // 3️⃣ 切換權限 (轉私密時透過全域事件觸發成員選取視窗)
   const handleTogglePrivacy = async () => {
     const nextPrivate = !localPrayer.is_private;
 
     if (nextPrivate) {
-      // 關閉目前詳情視窗，並發送事件開啟「EditPrivateAccessModal」授權視窗
       onClose();
       window.dispatchEvent(
         new CustomEvent('open-private-access-modal', { detail: localPrayer })
@@ -201,7 +200,6 @@ export default function PrayerDetailModal({
       return;
     }
 
-    // 若從私密轉為公禱
     try {
       const { error } = await supabase
         .from('prayers')
@@ -284,27 +282,32 @@ export default function PrayerDetailModal({
     }
   };
 
+  // 💬 發佈新留言：發布後留在視窗內，清空輸入框並即時更新留言列表
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !uid) return;
 
+    const commentText = newComment.trim();
+    setNewComment('');
     setLoading(true);
+
     try {
       const { error } = await supabase.from('prayer_comments').insert({
         prayer_id: localPrayer.id,
         user_id: uid,
-        content: newComment.trim(),
+        content: commentText,
       });
 
       if (!error) {
-        setNewComment('');
-        fetchDetailData();
+        await fetchDetailData();
         onRefresh();
       } else {
         alert(`發布失敗：${error.message}`);
+        setNewComment(commentText); // 失敗時恢復輸入文字
       }
     } catch (e: any) {
       alert(`發生錯誤：${e.message || e}`);
+      setNewComment(commentText);
     }
     setLoading(false);
   };
@@ -530,6 +533,7 @@ export default function PrayerDetailModal({
           </div>
         </div>
 
+        {/* 底部留言輸入列：發布後留在視窗內供持續回覆 */}
         <form onSubmit={handleAddComment} className="p-4 bg-white border-t border-gray-100 flex gap-2">
           <input
             type="text"
