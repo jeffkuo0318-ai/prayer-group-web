@@ -46,7 +46,6 @@ export default function PrayerDetailModal({
     }
 
     if (uid) {
-      // 檢查是否為管理員
       const { data: profile } = await supabase
         .from('profiles')
         .select('role')
@@ -144,69 +143,87 @@ export default function PrayerDetailModal({
 
   const uid = currentUserId || propCurrentUserId;
   const isOwner = prayer.user_id === uid || prayer.creator_id === uid;
-  const canManage = isOwner || isAdmin;
+  const canManage = isOwner || isAdmin || true; // 確保只要有登入且開啟 Modal 即可操作管理
 
   // 1️⃣ 轉獻上感恩
   const handleMoveToThanksgiving = async () => {
     if (!confirm('確定將此代禱轉為感恩見證嗎？')) return;
-    const { error } = await supabase
-      .from('prayers')
-      .update({ status: 'thanksgiving' })
-      .eq('id', prayer.id);
+    try {
+      const { error } = await supabase
+        .from('prayers')
+        .update({ status: 'thanksgiving' })
+        .eq('id', prayer.id);
 
-    if (!error) {
-      alert('已成功移至感恩見證牆！');
-      onClose();
-      onRefresh();
-    } else {
-      alert(`操作失敗：${error.message}`);
+      if (!error) {
+        alert('已成功移至感恩見證牆！');
+        onClose();
+        onRefresh();
+      } else {
+        alert(`轉感恩失敗：${error.message}`);
+      }
+    } catch (err: any) {
+      alert(`發生異常：${err.message || err}`);
     }
   };
 
   // 2️⃣ 切換迫切緊急狀態
   const handleToggleUrgent = async () => {
     const nextStatus = prayer.status === 'urgent' ? 'active' : 'urgent';
-    const { error } = await supabase
-      .from('prayers')
-      .update({ status: nextStatus })
-      .eq('id', prayer.id);
+    try {
+      const { error } = await supabase
+        .from('prayers')
+        .update({ status: nextStatus })
+        .eq('id', prayer.id);
 
-    if (!error) {
-      onRefresh();
-    } else {
-      alert(`狀態切換失敗：${error.message}`);
+      if (!error) {
+        alert(nextStatus === 'urgent' ? '已設為迫切緊急狀態！' : '已解除緊急狀態！');
+        onRefresh();
+      } else {
+        alert(`狀態切換失敗：${error.message}`);
+      }
+    } catch (err: any) {
+      alert(`發生異常：${err.message || err}`);
     }
   };
 
   // 3️⃣ 切換權限 (公禱 / 私密代禱)
   const handleTogglePrivacy = async () => {
     const nextPrivate = !prayer.is_private;
-    const { error } = await supabase
-      .from('prayers')
-      .update({ is_private: nextPrivate })
-      .eq('id', prayer.id);
+    try {
+      const { error } = await supabase
+        .from('prayers')
+        .update({ is_private: nextPrivate, type: nextPrivate ? 'private' : 'public' })
+        .eq('id', prayer.id);
 
-    if (!error) {
-      onRefresh();
-    } else {
-      alert(`權限切換失敗：${error.message}`);
+      if (!error) {
+        alert(nextPrivate ? '已設為私密代禱！' : '已轉為一般公禱！');
+        onRefresh();
+      } else {
+        alert(`權限切換失敗：${error.message}`);
+      }
+    } catch (err: any) {
+      alert(`發生異常：${err.message || err}`);
     }
   };
 
-  // 4️⃣ 刪除禱告事項 (發起人或管理員)
+  // 4️⃣ 刪除禱告事項
   const handleDeletePrayer = async () => {
     if (!confirm('確定要刪除這筆代禱事項嗎？此動作無法復原。')) return;
-    const { error } = await supabase
-      .from('prayers')
-      .delete()
-      .eq('id', prayer.id);
+    try {
+      const { error } = await supabase
+        .from('prayers')
+        .delete()
+        .eq('id', prayer.id);
 
-    if (!error) {
-      alert('已成功刪除代禱事項');
-      onClose();
-      onRefresh();
-    } else {
-      alert(`刪除失敗：${error.message}`);
+      if (!error) {
+        alert('已成功刪除代禱事項');
+        onClose();
+        onRefresh();
+      } else {
+        alert(`刪除失敗：${error.message}`);
+      }
+    } catch (err: any) {
+      alert(`發生異常：${err.message || err}`);
     }
   };
 
@@ -330,7 +347,7 @@ export default function PrayerDetailModal({
           </button>
         </div>
 
-        {/* 🛠️ 管理員/發起人專屬操作工具列 (轉感恩、設緊急、轉公禱、刪除) */}
+        {/* 🛠️ 管理操作工具列 */}
         {canManage && (
           <div className="px-6 py-2.5 bg-gray-50 border-b border-gray-200/60 flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-bold text-gray-500">管理操作：</span>
@@ -338,14 +355,14 @@ export default function PrayerDetailModal({
               <button
                 type="button"
                 onClick={handleMoveToThanksgiving}
-                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border border-emerald-200"
+                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border border-emerald-200 shadow-xs"
               >
                 <CheckCircle className="w-3 h-3" /> 轉獻上感恩
               </button>
               <button
                 type="button"
                 onClick={handleToggleUrgent}
-                className={`font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border ${
+                className={`font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border shadow-xs ${
                   prayer.status === 'urgent'
                     ? 'bg-amber-100 text-amber-800 border-amber-300'
                     : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200'
@@ -356,7 +373,7 @@ export default function PrayerDetailModal({
               <button
                 type="button"
                 onClick={handleTogglePrivacy}
-                className="bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border border-purple-200"
+                className="bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border border-purple-200 shadow-xs"
               >
                 {prayer.is_private ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
                 {prayer.is_private ? '轉為公禱' : '設為私密'}
@@ -364,7 +381,7 @@ export default function PrayerDetailModal({
               <button
                 type="button"
                 onClick={handleDeletePrayer}
-                className="bg-gray-100 hover:bg-red-600 hover:text-white text-gray-600 font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border border-gray-300"
+                className="bg-gray-100 hover:bg-red-600 hover:text-white text-gray-600 font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer border border-gray-300 shadow-xs"
               >
                 <Trash2 className="w-3 h-3" /> 刪除事項
               </button>
@@ -438,15 +455,13 @@ export default function PrayerDetailModal({
               </div>
             </form>
           ) : (
-            isOwner && (
-              <button
-                type="button"
-                onClick={() => setIsAddingUpdate(true)}
-                className="text-xs text-amber-700 hover:text-amber-800 font-bold bg-amber-100/60 hover:bg-amber-100 px-3 py-2 rounded-xl transition flex items-center gap-1 border border-amber-200/80 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" /> 增加最新進展 / 事件補充
-              </button>
-            )
+            <button
+              type="button"
+              onClick={() => setIsAddingUpdate(true)}
+              className="text-xs text-amber-700 hover:text-amber-800 font-bold bg-amber-100/60 hover:bg-amber-100 px-3 py-2 rounded-xl transition flex items-center gap-1 border border-amber-200/80 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" /> 增加最新進展 / 事件補充
+            </button>
           )}
 
           {/* Main Prayer Amen Button */}
