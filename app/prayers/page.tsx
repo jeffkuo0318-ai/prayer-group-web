@@ -10,8 +10,6 @@ import {
   Plus,
   RotateCcw,
   ShieldCheck,
-  Trash2,
-  ChevronRight,
   ArrowLeft
 } from 'lucide-react';
 import Link from 'next/link';
@@ -31,8 +29,10 @@ export default function PrayersPage() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [editingPrayerForAccess, setEditingPrayerForAccess] = useState<any>(null);
 
-  const fetchPrayersAndUser = async () => {
-    setLoading(true);
+  // 支援靜默背景更新，避免每次互動都觸發 setLoading(true) 導致彈窗被關閉
+  const fetchPrayersAndUser = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
+
     // 1. 取得當前使用者與角色權限
     const { data: { user } } = await supabase.auth.getUser();
     setCurrentUser(user);
@@ -79,11 +79,12 @@ export default function PrayersPage() {
     } else if (error) {
       console.error('Fetch error:', error.message);
     }
-    setLoading(false);
+
+    if (showLoading) setLoading(false);
   };
 
   useEffect(() => {
-    fetchPrayersAndUser();
+    fetchPrayersAndUser(true);
 
     // 監聽來自 PrayerDetailModal 的事件：當點擊設為私密時，自動開啟 EditPrivateAccessModal 讓使用者選擇成員
     const handleOpenAccessModal = (e: any) => {
@@ -98,45 +99,6 @@ export default function PrayersPage() {
     };
   }, []);
 
-  // 快捷操作：切換狀態 (轉感恩/設緊急/恢復禱告中)
-  const handleUpdateStatus = async (prayerId: string, newStatus: string) => {
-    const { error } = await supabase
-      .from('prayers')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', prayerId);
-
-    if (!error) {
-      fetchPrayersAndUser();
-    } else {
-      alert(`狀態更新失敗：${error.message}`);
-    }
-  };
-
-  // 快捷操作：切換公私密權限
-  const handleTogglePrivate = async (prayer: any) => {
-    if (prayer.is_private || prayer.type === 'private') {
-      const { error } = await supabase
-        .from('prayers')
-        .update({ is_private: false, type: 'public' })
-        .eq('id', prayer.id);
-      if (!error) fetchPrayersAndUser();
-    } else {
-      setEditingPrayerForAccess(prayer);
-    }
-  };
-
-  // 快捷操作：刪除代禱事項
-  const handleDeletePrayer = async (prayerId: string) => {
-    if (!confirm('確定要刪除這筆代禱事項嗎？刪除後無法復原。')) return;
-    const { error } = await supabase.from('prayers').delete().eq('id', prayerId);
-    if (!error) {
-      if (focusedPrayerId === prayerId) setFocusedPrayerId(null);
-      fetchPrayersAndUser();
-    } else {
-      alert(`刪除失敗：${error.message}`);
-    }
-  };
-
   // 📊 數據統計計算
   const stats = {
     active: prayers.filter((p) => p.status !== 'answered' && p.status !== 'thanksgiving').length,
@@ -144,13 +106,6 @@ export default function PrayersPage() {
     answered: prayers.filter((p) => p.status === 'answered').length,
     thanksgiving: prayers.filter((p) => p.status === 'thanksgiving').length,
   };
-
-  // 私密事項清單（完整保留供後台/側邊邏輯參照）
-  const privatePrayers = prayers.filter(
-    (p) =>
-      (p.is_private || p.type === 'private') &&
-      (p.user_id === currentUser?.id || p.creator_id === currentUser?.id || isAdminOrLeader)
-  );
 
   // 🎯 依標籤分頁嚴格過濾與隱私安全控管
   const filteredPrayers = prayers.filter((p) => {
@@ -399,7 +354,7 @@ export default function PrayersPage() {
                   key={prayer.id}
                   prayer={prayer}
                   currentUserId={currentUser?.id || ''}
-                  onRefresh={fetchPrayersAndUser}
+                  onRefresh={() => fetchPrayersAndUser(false)}
                 />
               ))}
             </div>
@@ -412,7 +367,7 @@ export default function PrayersPage() {
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         currentUserId={currentUser?.id || ''}
-        onSuccess={fetchPrayersAndUser}
+        onSuccess={() => fetchPrayersAndUser(false)}
       />
 
       {currentUser && (
@@ -430,7 +385,7 @@ export default function PrayersPage() {
           onClose={() => setEditingPrayerForAccess(null)}
           prayer={editingPrayerForAccess}
           currentUserId={currentUser?.id || ''}
-          onSuccess={fetchPrayersAndUser}
+          onSuccess={() => fetchPrayersAndUser(false)}
         />
       )}
     </div>
