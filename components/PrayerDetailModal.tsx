@@ -21,7 +21,7 @@ export default function PrayerDetailModal({
 }: PrayerDetailModalProps) {
   const [mounted, setMounted] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>(propCurrentUserId || '');
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [isAdminOrLeader, setIsAdminOrLeader] = useState<boolean>(false);
   const [localPrayer, setLocalPrayer] = useState<any>(prayer);
   const [creatorInfo, setCreatorInfo] = useState<string>('主內肢體');
   const [amenCount, setAmenCount] = useState<number>(0);
@@ -46,7 +46,8 @@ export default function PrayerDetailModal({
     }
   }, [prayer]);
 
-  const ensureUserAndRole = async (): Promise<string | null> => {
+  // 🔒 嚴格身分與權限驗證（小家長/管理員/特定最高權限）
+  const ensureUserAndRole = async (): Promise<{ uid: string | null; canManageRole: boolean }> => {
     let uid = currentUserId || propCurrentUserId;
     if (!uid) {
       const { data: { user } } = await supabase.auth.getUser();
@@ -56,26 +57,39 @@ export default function PrayerDetailModal({
       }
     }
 
+    let canManageRole = false;
+
     if (uid) {
       const { data: profile } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', uid)
         .single();
-      if (profile?.role === 'admin' || profile?.role === 'leader') {
-        setIsAdmin(true);
+
+      const userEmail = (await supabase.auth.getUser()).data.user?.email || '';
+
+      if (
+        profile?.role === 'admin' ||
+        profile?.role === 'leader' ||
+        userEmail === 'jeffkuo0318@gmail.com'
+      ) {
+        canManageRole = true;
+        setIsAdminOrLeader(true);
+      } else {
+        setIsAdminOrLeader(false);
       }
     }
-    return uid || null;
+
+    return { uid: uid || null, canManageRole };
   };
 
   const fetchDetailData = async () => {
     const targetPrayerId = localPrayer?.id || prayer?.id;
     if (!targetPrayerId) return;
-    const uid = await ensureUserAndRole();
+    const { uid } = await ensureUserAndRole();
 
     try {
-      // 1. 抓取發起人的姓名與小組名稱
+      // 1. 抓取發起人姓名與小組
       const targetUserId = localPrayer?.user_id || localPrayer?.creator_id || prayer?.user_id || prayer?.creator_id;
       if (targetUserId) {
         const { data: prof } = await supabase
@@ -104,7 +118,7 @@ export default function PrayerDetailModal({
         if (uid) setHasAmened(amens.some((a) => a.user_id === uid));
       }
 
-      // 3. 抓取留言串
+      // 3. 抓取留言串與按讚名單
       const { data: commentData } = await supabase
         .from('prayer_comments')
         .select('*')
@@ -179,7 +193,6 @@ export default function PrayerDetailModal({
     if (mounted && isOpen && targetId) {
       fetchDetailData();
 
-      // ⚡ 啟用該對話視窗的 Supabase Realtime 訂閱（新留言、按讚即時動態推送）
       const commentChannel = supabase
         .channel(`realtime-comments-${targetId}`)
         .on(
@@ -201,10 +214,13 @@ export default function PrayerDetailModal({
 
   const currentPrayer = localPrayer || prayer;
   const uid = currentUserId || propCurrentUserId;
-  const isOwner = currentPrayer.user_id === uid || currentPrayer.creator_id === uid;
-  const canManage = isOwner || isAdmin || true;
+
+  // 🔐 嚴格權限比對：只有「發起人」或「管理員/小家長」具備管理操作權限
+  const isOwner = uid && (currentPrayer.user_id === uid || currentPrayer.creator_id === uid);
+  const canManage = isOwner || isAdminOrLeader;
 
   const handleMoveToThanksgiving = async () => {
+    if (!canManage) return alert('您沒有權限執行此操作');
     if (!confirm('確定將此代禱轉為感恩見證嗎？')) return;
     try {
       const { error } = await supabase.from('prayers').update({ status: 'thanksgiving' }).eq('id', currentPrayer.id);
@@ -221,6 +237,7 @@ export default function PrayerDetailModal({
   };
 
   const handleToggleUrgent = async () => {
+    if (!canManage) return alert('您沒有權限執行此操作');
     const nextStatus = currentPrayer.status === 'urgent' ? 'active' : 'urgent';
     try {
       const { error } = await supabase.from('prayers').update({ status: nextStatus }).eq('id', currentPrayer.id);
@@ -236,6 +253,7 @@ export default function PrayerDetailModal({
   };
 
   const handleTogglePrivacy = async () => {
+    if (!canManage) return alert('您沒有權限執行此操作');
     const nextPrivate = !currentPrayer.is_private;
     if (nextPrivate) {
       onClose();
@@ -257,6 +275,7 @@ export default function PrayerDetailModal({
   };
 
   const handleDeletePrayer = async () => {
+    if (!canManage) return alert('您沒有權限執行此操作');
     if (!confirm('確定要刪除這筆代禱事項嗎？此動作無法復原。')) return;
     try {
       const { error } = await supabase.from('prayers').delete().eq('id', currentPrayer.id);
@@ -364,7 +383,7 @@ export default function PrayerDetailModal({
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in font-sans">
       <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden relative">
         
-        {/* Header：顯示代禱發起人姓名與所屬小組 */}
+        {/* Header：顯示代禱發起人姓名與小組 */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-amber-50/60">
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <span className="font-bold text-amber-900 bg-amber-100/80 px-2.5 py-1 rounded-xl flex items-center gap-1.5 text-sm">
@@ -384,7 +403,7 @@ export default function PrayerDetailModal({
           </button>
         </div>
 
-        {/* 🛠️ 管理操作工具列 */}
+        {/* 🛠️ 管理操作工具列：嚴格控制僅建立者、小家長與管理員可視及操作 */}
         {canManage && (
           <div className="px-6 py-2.5 bg-gray-50 border-b border-gray-200/60 flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-bold text-gray-500">管理操作：</span>
