@@ -29,11 +29,9 @@ export default function PrayersPage() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [editingPrayerForAccess, setEditingPrayerForAccess] = useState<any>(null);
 
-  // 支援靜默背景更新，避免每次互動都觸發 setLoading(true) 導致彈窗被關閉
   const fetchPrayersAndUser = async (showLoading = true) => {
     if (showLoading) setLoading(true);
 
-    // 1. 取得當前使用者與角色權限
     const { data: { user } } = await supabase.auth.getUser();
     setCurrentUser(user);
 
@@ -49,7 +47,6 @@ export default function PrayersPage() {
         setIsAdminOrLeader(true);
       }
 
-      // 檢查 User profile 是否已填寫真實姓名與小組
       const { data: profile } = await supabase
         .from('profiles')
         .select('full_name, group_name, role')
@@ -68,14 +65,35 @@ export default function PrayersPage() {
       }
     }
 
-    // 2. 抓取代禱事項
+    // 2. 抓取代禱事項（並補全發起人姓名與小組）
     const { data, error } = await supabase
       .from('prayers')
       .select('*')
       .order('created_at', { ascending: false });
 
     if (!error && data) {
-      setPrayers(data);
+      const enrichedPrayers = await Promise.all(
+        data.map(async (p) => {
+          let creatorDisplayName = p.creator_name || '主內肢體';
+          const targetUserId = p.user_id || p.creator_id;
+          if (targetUserId) {
+            try {
+              const { data: prof } = await supabase
+                .from('profiles')
+                .select('full_name, group_name')
+                .eq('id', targetUserId)
+                .single();
+              if (prof?.full_name) {
+                creatorDisplayName = prof.group_name
+                  ? `${prof.full_name} (${prof.group_name})`
+                  : prof.full_name;
+              }
+            } catch (e) {}
+          }
+          return { ...p, creatorDisplayName };
+        })
+      );
+      setPrayers(enrichedPrayers);
     } else if (error) {
       console.error('Fetch error:', error.message);
     }
@@ -86,7 +104,18 @@ export default function PrayersPage() {
   useEffect(() => {
     fetchPrayersAndUser(true);
 
-    // 監聽來自 PrayerDetailModal 的事件：當點擊設為私密時，自動開啟 EditPrivateAccessModal 讓使用者選擇成員
+    // ⚡ 啟用 Supabase Realtime 即時推播訂閱（新增、修改代禱卡片秒級同步）
+    const channel = supabase
+      .channel('realtime-prayers')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'prayers' },
+        () => {
+          fetchPrayersAndUser(false);
+        }
+      )
+      .subscribe();
+
     const handleOpenAccessModal = (e: any) => {
       if (e.detail) {
         setEditingPrayerForAccess(e.detail);
@@ -95,19 +124,21 @@ export default function PrayersPage() {
 
     window.addEventListener('open-private-access-modal', handleOpenAccessModal as EventListener);
     return () => {
+      supabase.removeChannel(channel);
       window.removeEventListener('open-private-access-modal', handleOpenAccessModal as EventListener);
     };
   }, []);
 
-  // 📊 數據統計計算
-  const stats = {
-    active: prayers.filter((p) => p.status !== 'answered' && p.status !== 'thanksgiving').length,
+  // 📊 各分頁動態統計數量計算
+  const tabCounts = {
+    all: prayers.filter((p) => p.status !== 'answered' && p.status !== 'thanksgiving').length,
     urgent: prayers.filter((p) => p.status === 'urgent').length,
+    public: prayers.filter((p) => (!p.is_private && p.type !== 'private') && p.status !== 'urgent' && p.status !== 'answered' && p.status !== 'thanksgiving').length,
+    private: prayers.filter((p) => (p.is_private || p.type === 'private') && p.status !== 'answered' && p.status !== 'thanksgiving').length,
     answered: prayers.filter((p) => p.status === 'answered').length,
     thanksgiving: prayers.filter((p) => p.status === 'thanksgiving').length,
   };
 
-  // 🎯 依標籤分頁嚴格過濾與隱私安全控管
   const filteredPrayers = prayers.filter((p) => {
     if (focusedPrayerId) return p.id === focusedPrayerId;
 
@@ -194,7 +225,7 @@ export default function PrayersPage() {
               }`}
             >
               <span className="text-xs font-bold text-slate-200">禱告中</span>
-              <span className="text-lg md:text-xl font-black text-amber-400">{stats.active}</span>
+              <span className="text-lg md:text-xl font-black text-amber-400">{tabCounts.all}</span>
             </div>
 
             <div
@@ -207,7 +238,7 @@ export default function PrayersPage() {
               }`}
             >
               <span className="text-xs font-bold text-slate-200">迫切緊急</span>
-              <span className="text-lg md:text-xl font-black text-red-400">{stats.urgent}</span>
+              <span className="text-lg md:text-xl font-black text-red-400">{tabCounts.urgent}</span>
             </div>
 
             <div
@@ -220,7 +251,7 @@ export default function PrayersPage() {
               }`}
             >
               <span className="text-xs font-bold text-slate-200">蒙應允</span>
-              <span className="text-lg md:text-xl font-black text-emerald-400">{stats.answered}</span>
+              <span className="text-lg md:text-xl font-black text-emerald-400">{tabCounts.answered}</span>
             </div>
 
             <div
@@ -233,12 +264,12 @@ export default function PrayersPage() {
               }`}
             >
               <span className="text-xs font-bold text-slate-200">獻上感恩</span>
-              <span className="text-lg md:text-xl font-black text-purple-400">{stats.thanksgiving}</span>
+              <span className="text-lg md:text-xl font-black text-purple-400">{tabCounts.thanksgiving}</span>
             </div>
           </div>
         </div>
 
-        {/* 3. 主區塊：滿版置中禱告牆與分頁過濾 */}
+        {/* 3. 主區塊：滿版置中禱告牆與動態分頁數字標籤 */}
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs md:text-sm">
@@ -247,13 +278,14 @@ export default function PrayersPage() {
                   setFocusedPrayerId(null);
                   setFilter('all');
                 }}
-                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   filter === 'all' && !focusedPrayerId
                     ? 'bg-amber-500 text-white shadow-xs'
                     : 'bg-white border text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                全部代禱
+                <span>全部代禱</span>
+                <span className="bg-black/10 px-1.5 py-0.5 rounded-full text-[11px]">{tabCounts.all}</span>
               </button>
 
               <button
@@ -261,13 +293,14 @@ export default function PrayersPage() {
                   setFocusedPrayerId(null);
                   setFilter('urgent');
                 }}
-                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   filter === 'urgent'
                     ? 'bg-red-600 text-white shadow-xs'
                     : 'bg-white border text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                迫切緊急
+                <span>迫切緊急</span>
+                <span className="bg-black/10 px-1.5 py-0.5 rounded-full text-[11px]">{tabCounts.urgent}</span>
               </button>
 
               <button
@@ -275,13 +308,14 @@ export default function PrayersPage() {
                   setFocusedPrayerId(null);
                   setFilter('public');
                 }}
-                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   filter === 'public'
                     ? 'bg-amber-500 text-white shadow-xs'
                     : 'bg-white border text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                一般公禱
+                <span>一般公禱</span>
+                <span className="bg-black/10 px-1.5 py-0.5 rounded-full text-[11px]">{tabCounts.public}</span>
               </button>
 
               <button
@@ -289,13 +323,14 @@ export default function PrayersPage() {
                   setFocusedPrayerId(null);
                   setFilter('private');
                 }}
-                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   filter === 'private'
                     ? 'bg-purple-600 text-white shadow-xs'
                     : 'bg-white border text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                私密代禱
+                <span>私密代禱</span>
+                <span className="bg-black/10 px-1.5 py-0.5 rounded-full text-[11px]">{tabCounts.private}</span>
               </button>
 
               <button
@@ -303,13 +338,14 @@ export default function PrayersPage() {
                   setFocusedPrayerId(null);
                   setFilter('answered');
                 }}
-                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   filter === 'answered'
                     ? 'bg-emerald-600 text-white shadow-xs'
                     : 'bg-white border text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                蒙應允
+                <span>蒙應允</span>
+                <span className="bg-black/10 px-1.5 py-0.5 rounded-full text-[11px]">{tabCounts.answered}</span>
               </button>
 
               <button
@@ -317,13 +353,14 @@ export default function PrayersPage() {
                   setFocusedPrayerId(null);
                   setFilter('thanksgiving');
                 }}
-                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   filter === 'thanksgiving'
                     ? 'bg-purple-600 text-white shadow-xs'
                     : 'bg-white border text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                感恩見證牆
+                <span>感恩見證牆</span>
+                <span className="bg-black/10 px-1.5 py-0.5 rounded-full text-[11px]">{tabCounts.thanksgiving}</span>
               </button>
             </div>
           </div>
