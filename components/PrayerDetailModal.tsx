@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { X, Heart, MessageCircle, Plus, Clock, Globe, Lock, Trash2, AlertCircle, CheckCircle, Send } from 'lucide-react';
+import { X, Heart, MessageCircle, Plus, Clock, Globe, Lock, Trash2, AlertCircle, CheckCircle, Send, MoreVertical, Copy, CornerDownRight } from 'lucide-react';
 
 interface PrayerDetailModalProps {
   isOpen: boolean;
@@ -31,6 +31,10 @@ export default function PrayerDetailModal({
   const [newUpdateText, setNewUpdateText] = useState('');
   const [isAddingUpdate, setIsAddingUpdate] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // 互動選單與按讚名單 Modal 狀態
+  const [activeMenuCommentId, setActiveMenuCommentId] = useState<string | null>(null);
+  const [likersModalData, setLikersModalData] = useState<{ isOpen: boolean; names: string[] }>({ isOpen: false, names: [] });
 
   useEffect(() => {
     setMounted(true);
@@ -104,14 +108,29 @@ export default function PrayerDetailModal({
 
             let cAmenCount = 0;
             let cHasAmened = false;
+            let likerNames: string[] = [];
             try {
               const { data: cAmens } = await supabase
                 .from('comment_amens')
-                .select('*')
+                .select('user_id')
                 .eq('comment_id', String(c.id));
               if (cAmens) {
                 cAmenCount = cAmens.length;
                 if (uid) cHasAmened = cAmens.some((ca) => ca.user_id === uid);
+
+                // 取得所有按讚者的真實姓名
+                for (const ca of cAmens) {
+                  const { data: pData } = await supabase
+                    .from('profiles')
+                    .select('full_name')
+                    .eq('id', ca.user_id)
+                    .single();
+                  if (pData?.full_name) {
+                    likerNames.push(pData.full_name);
+                  } else {
+                    likerNames.push('主內肢體');
+                  }
+                }
               }
             } catch (e) {}
 
@@ -120,6 +139,7 @@ export default function PrayerDetailModal({
               authorName,
               amenCount: cAmenCount,
               hasAmened: cHasAmened,
+              likerNames,
             };
           })
         );
@@ -151,15 +171,11 @@ export default function PrayerDetailModal({
   const isOwner = currentPrayer.user_id === uid || currentPrayer.creator_id === uid;
   const canManage = isOwner || isAdmin || true;
 
-  // 1️⃣ 轉獻上感恩
+  // 管理操作函式
   const handleMoveToThanksgiving = async () => {
     if (!confirm('確定將此代禱轉為感恩見證嗎？')) return;
     try {
-      const { error } = await supabase
-        .from('prayers')
-        .update({ status: 'thanksgiving' })
-        .eq('id', currentPrayer.id);
-
+      const { error } = await supabase.from('prayers').update({ status: 'thanksgiving' }).eq('id', currentPrayer.id);
       if (!error) {
         setLocalPrayer((prev: any) => ({ ...prev, status: 'thanksgiving' }));
         onRefresh();
@@ -172,15 +188,10 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 2️⃣ 切換迫切緊急狀態
   const handleToggleUrgent = async () => {
     const nextStatus = currentPrayer.status === 'urgent' ? 'active' : 'urgent';
     try {
-      const { error } = await supabase
-        .from('prayers')
-        .update({ status: nextStatus })
-        .eq('id', currentPrayer.id);
-
+      const { error } = await supabase.from('prayers').update({ status: nextStatus }).eq('id', currentPrayer.id);
       if (!error) {
         setLocalPrayer((prev: any) => ({ ...prev, status: nextStatus }));
         onRefresh();
@@ -192,24 +203,15 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 3️⃣ 切換權限
   const handleTogglePrivacy = async () => {
     const nextPrivate = !currentPrayer.is_private;
-
     if (nextPrivate) {
       onClose();
-      window.dispatchEvent(
-        new CustomEvent('open-private-access-modal', { detail: currentPrayer })
-      );
+      window.dispatchEvent(new CustomEvent('open-private-access-modal', { detail: currentPrayer }));
       return;
     }
-
     try {
-      const { error } = await supabase
-        .from('prayers')
-        .update({ is_private: false, type: 'public' })
-        .eq('id', currentPrayer.id);
-
+      const { error } = await supabase.from('prayers').update({ is_private: false, type: 'public' }).eq('id', currentPrayer.id);
       if (!error) {
         setLocalPrayer((prev: any) => ({ ...prev, is_private: false, type: 'public' }));
         onRefresh();
@@ -222,15 +224,10 @@ export default function PrayerDetailModal({
     }
   };
 
-  // 4️⃣ 刪除禱告事項
   const handleDeletePrayer = async () => {
     if (!confirm('確定要刪除這筆代禱事項嗎？此動作無法復原。')) return;
     try {
-      const { error } = await supabase
-        .from('prayers')
-        .delete()
-        .eq('id', currentPrayer.id);
-
+      const { error } = await supabase.from('prayers').delete().eq('id', currentPrayer.id);
       if (!error) {
         onClose();
         onRefresh();
@@ -258,20 +255,10 @@ export default function PrayerDetailModal({
     }
   };
 
+  // 💖 留言按讚與即時更新按讚名單
   const handleToggleCommentAmen = async (commentId: string, commentHasAmened: boolean) => {
     if (!uid) return alert('請先登入才能認同留言');
-
     const strCommentId = String(commentId);
-    setComments((prevComments) =>
-      prevComments.map((c) => {
-        if (String(c.id) === strCommentId) {
-          const nextHasAmened = !commentHasAmened;
-          const nextCount = nextHasAmened ? c.amenCount + 1 : Math.max(0, c.amenCount - 1);
-          return { ...c, hasAmened: nextHasAmened, amenCount: nextCount };
-        }
-        return c;
-      })
-    );
 
     try {
       if (commentHasAmened) {
@@ -282,11 +269,10 @@ export default function PrayerDetailModal({
       fetchDetailData();
     } catch (e: any) {
       alert(`認同留言失敗：${e.message}`);
-      fetchDetailData();
     }
   };
 
-  // 💬 發布新留言（嚴格檢驗 ID，發布後留在視窗內持續對話）
+  // 💬 發布新留言（發布後留在視窗內）
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetId = currentPrayer?.id;
@@ -349,7 +335,8 @@ export default function PrayerDetailModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in font-sans">
-      <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+      <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden relative">
+        
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-amber-50/60">
           <div className="flex items-center gap-2 text-xs text-gray-500">
@@ -498,6 +485,7 @@ export default function PrayerDetailModal({
             </button>
           </div>
 
+          {/* LINE 風格留言串 */}
           <div className="space-y-3 pt-4 border-t border-gray-100">
             <h3 className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
               <MessageCircle className="w-4 h-4 text-amber-600" /> 肢體守望留言串 ({comments.length})
@@ -510,7 +498,7 @@ export default function PrayerDetailModal({
                 {comments.map((c) => (
                   <div
                     key={c.id}
-                    className="bg-white p-3 rounded-2xl border border-gray-200/60 text-xs flex items-start justify-between gap-3 shadow-xs hover:border-amber-200 transition"
+                    className="bg-white p-3 rounded-2xl border border-gray-200/60 text-xs flex items-start justify-between gap-3 shadow-xs hover:border-amber-200 transition relative"
                   >
                     <div className="space-y-1 flex-1">
                       <div className="font-bold text-gray-800 flex items-center justify-between">
@@ -522,19 +510,74 @@ export default function PrayerDetailModal({
                       <p className="text-gray-600 whitespace-pre-wrap leading-relaxed">{c.content}</p>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleToggleCommentAmen(c.id, c.hasAmened)}
-                      className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
-                        c.hasAmened
-                          ? 'bg-amber-500 text-white shadow-xs'
-                          : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/60'
-                      }`}
-                      title="認同此留言"
-                    >
-                      <Heart className={`w-3.5 h-3.5 ${c.hasAmened ? 'fill-current text-white' : 'text-amber-500'}`} />
-                      <span>{c.amenCount > 0 ? c.amenCount : ''}</span>
-                    </button>
+                    {/* 右側按鈕群：按讚數膠囊 + 快捷選單按鈕 */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {/* 點擊愛心按鈕直接切換按讚狀態 */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleCommentAmen(c.id, c.hasAmened)}
+                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          c.hasAmened
+                            ? 'bg-amber-500 text-white shadow-xs'
+                            : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/60'
+                        }`}
+                        title="點擊愛心按讚或取消"
+                      >
+                        <Heart className={`w-3.5 h-3.5 ${c.hasAmened ? 'fill-current text-white' : 'text-amber-500'}`} />
+                        <span>{c.amenCount > 0 ? c.amenCount : ''}</span>
+                      </button>
+
+                      {/* 點擊小膠囊或按讚數，若大於0可彈出查看誰按讚 */}
+                      {c.amenCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setLikersModalData({ isOpen: true, names: c.likerNames || [] })}
+                          className="text-[10px] text-gray-500 hover:text-amber-600 bg-gray-100 hover:bg-gray-200 px-2 py-1.5 rounded-xl transition cursor-pointer"
+                          title="查看誰按讚"
+                        >
+                          名單
+                        </button>
+                      )}
+
+                      {/* LINE 風格右鍵快捷選單切換按鈕 */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setActiveMenuCommentId(activeMenuCommentId === c.id ? null : c.id)}
+                          className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition cursor-pointer"
+                          title="更多選項 (回覆/複製)"
+                        >
+                          <MoreVertical className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* LINE 風格右鍵彈出選單[cite: 11] */}
+                        {activeMenuCommentId === c.id && (
+                          <div className="absolute right-0 top-7 bg-white border border-gray-200 rounded-xl shadow-lg py-1.5 z-20 w-28 text-[11px] font-semibold animate-fade-in">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewComment(`@${c.authorName} `);
+                                setActiveMenuCommentId(null);
+                              }}
+                              className="w-full text-left px-3 py-1.5 hover:bg-amber-50 text-gray-700 flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <CornerDownRight className="w-3 h-3 text-amber-600" /> 回覆
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(c.content);
+                                alert('已複製留言內容！');
+                                setActiveMenuCommentId(null);
+                              }}
+                              className="w-full text-left px-3 py-1.5 hover:bg-amber-50 text-gray-700 flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Copy className="w-3 h-3 text-gray-500" /> 複製
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -559,6 +602,45 @@ export default function PrayerDetailModal({
             <Send className="w-4 h-4" /> 發佈
           </button>
         </form>
+
+        {/* 👥 點擊查看按讚者名單的小彈窗 */}
+        {likersModalData.isOpen && (
+          <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white w-full max-w-xs rounded-2xl p-4 shadow-xl space-y-3">
+              <div className="flex items-center justify-between border-b pb-2">
+                <h4 className="text-xs font-bold text-gray-800 flex items-center gap-1">
+                  <Heart className="w-3.5 h-3.5 fill-current text-amber-500" /> 按讚守望肢體名單
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setLikersModalData({ isOpen: false, names: [] })}
+                  className="text-gray-400 hover:text-gray-600 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto text-xs text-gray-700">
+                {likersModalData.names.length === 0 ? (
+                  <p className="text-gray-400 text-center py-2">尚無按讚記錄</p>
+                ) : (
+                  likersModalData.names.map((name, idx) => (
+                    <div key={idx} className="bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-100 font-medium">
+                      {name}
+                    </div>
+                  ))
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setLikersModalData({ isOpen: false, names: [] })}
+                className="w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                關閉
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
